@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { Merchant } from '../models/Merchant.js'
+import { Notification } from '../models/Notification.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
 import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 import { uploadBufferToCloudinary } from '../config/cloudinary.js'
