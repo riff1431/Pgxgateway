@@ -49,6 +49,23 @@ export async function markAsRead(req: AuthRequest, res: Response, next: NextFunc
   }
 }
 
+// Mark ALL notifications as read
+export async function markAllAsRead(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+
+    await Notification.updateMany({ merchantId, isRead: false }, { isRead: true })
+
+    res.status(200).json({
+      success: true,
+      message: 'All notifications marked as read.',
+      unreadCount: 0,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 // Create support ticket (Request Support > quick action)
 export async function createSupportTicket(req: AuthRequest, res: Response, next: NextFunction) {
   try {

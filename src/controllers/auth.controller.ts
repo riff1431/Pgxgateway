@@ -186,3 +186,79 @@ export async function getMe(req: AuthRequest, res: Response, next: NextFunction)
     next(error)
   }
 }
+
+// Update Profile Information (Account Settings)
+export async function updateProfile(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    const { fullName, phone, whatsapp, telegram } = req.body
+
+    const updateFields: Record<string, string> = {}
+    if (fullName) updateFields.fullName = fullName.trim()
+    if (phone) updateFields.phone = phone.trim()
+    if (whatsapp !== undefined) updateFields.whatsapp = whatsapp.trim()
+    if (telegram !== undefined) updateFields.telegram = telegram.trim()
+
+    const updated = await Merchant.findByIdAndUpdate(merchantId, updateFields, {
+      new: true,
+      runValidators: true,
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully.',
+      data: updated,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Change Password (Account Settings Security)
+export async function changePassword(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    const { currentPassword, newPassword } = req.body
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide both current and new passwords.',
+      })
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 8 characters long.',
+      })
+    }
+
+    // Fetch merchant including password
+    const merchant = await Merchant.findById(merchantId).select('+password')
+    if (!merchant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Merchant account not found.',
+      })
+    }
+
+    const isMatch = await merchant.comparePassword(currentPassword)
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect.',
+      })
+    }
+
+    merchant.password = newPassword
+    await merchant.save()
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully.',
+    })
+  } catch (error) {
+    next(error)
+  }
+}
