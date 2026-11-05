@@ -17,4 +17,9 @@ export const config = {
     apiSecret: process.env.CLOUDINARY_API_SECRET || 'r4otxf3HaqwbyJIo4D4NXK8WRT4',
     url: process.env.CLOUDINARY_URL || 'cloudinary://276828639658817:r4otxf3HaqwbyJIo4D4NXK8WRT4@wumsaw2a',
   },
+  admin: {
+    email: process.env.ADMIN_EMAIL || 'admin@pgxgateway.com',
+    password: process.env.ADMIN_PASSWORD || 'AdminSecurePass2026!',
+    secretKey: process.env.ADMIN_SECRET_KEY || 'pgx_admin_secret_super_secure_key_2026',
+  },
 }

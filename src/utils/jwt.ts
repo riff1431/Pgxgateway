@@ -4,6 +4,7 @@ import { config } from '../config/env.js'
 export interface JWTPayload {
   id: string
   email: string
+  role?: 'merchant' | 'admin'
 }
 
 export function signToken(payload: JWTPayload): string {
