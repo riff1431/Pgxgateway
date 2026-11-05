@@ -3,6 +3,7 @@ import { config } from '../config/env.js'
 import { signToken } from '../utils/jwt.js'
 import { Merchant } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
+import { SystemConfig } from '../models/SystemConfig.js'
 import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 
 // Admin Login
@@ -220,6 +221,125 @@ export async function getAdminStats(_req: Request, res: Response, next: NextFunc
         approved,
         rejected,
       },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Get System Branding & Settings
+export async function getSystemConfig(_req: Request, res: Response, next: NextFunction) {
+  try {
+    let config = await SystemConfig.findOne()
+    if (!config) {
+      config = await SystemConfig.create({
+        siteName: 'PGX Gateway',
+        logoUrl: '',
+        faviconUrl: '/favicon.svg',
+        supportEmail: 'support@pgxgateway.com',
+        supportPhone: '+1 (800) 749-4283',
+        supportTelegram: '@pgxsupport',
+        supportWhatsapp: '+1 (800) 749-4283',
+      })
+    }
+    res.status(200).json({
+      success: true,
+      data: config,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Update System Branding & Settings (Admin Only)
+export async function updateSystemConfig(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { siteName, logoUrl, faviconUrl, supportEmail, supportPhone, supportTelegram, supportWhatsapp } = req.body
+
+    let config = await SystemConfig.findOne()
+    if (!config) {
+      config = new SystemConfig()
+    }
+
+    if (siteName !== undefined) config.siteName = siteName.trim()
+    if (logoUrl !== undefined) config.logoUrl = logoUrl.trim()
+    if (faviconUrl !== undefined) config.faviconUrl = faviconUrl.trim()
+    if (supportEmail !== undefined) config.supportEmail = supportEmail.trim()
+    if (supportPhone !== undefined) config.supportPhone = supportPhone.trim()
+    if (supportTelegram !== undefined) config.supportTelegram = supportTelegram.trim()
+    if (supportWhatsapp !== undefined) config.supportWhatsapp = supportWhatsapp.trim()
+
+    await config.save()
+
+    res.status(200).json({
+      success: true,
+      message: 'Branding and system settings updated successfully.',
+      data: config,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Send Direct Message from Admin to a Merchant (Powers two-way messaging & instant WebSocket sync)
+export async function sendMessageToMerchant(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+    const { title, content, type = 'general' } = req.body
+
+    if (!title || !content) {
+      return res.status(400).json({
+        success: false,
+        message: 'Title and message content are required.',
+      })
+    }
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Merchant not found.',
+      })
+    }
+
+    const notification = await Notification.create({
+      merchantId: merchant._id,
+      title: title.trim(),
+      content: content.trim(),
+      type: ['system', 'offer', 'document', 'general'].includes(type) ? type : 'general',
+      isRead: false,
+    })
+
+    const unreadCount = await Notification.countDocuments({
+      merchantId: merchant._id,
+      isRead: false,
+    })
+
+    // Instant Real-time WebSocket Emission to the Merchant's Room
+    emitToMerchant(String(merchant._id), WS_EVENTS.NEW_NOTIFICATION, {
+      notification,
+      unreadCount,
+    })
+
+    res.status(201).json({
+      success: true,
+      message: 'Message delivered to merchant in real-time.',
+      data: notification,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Get All Messages/Inquiries for a Specific Merchant
+export async function getMerchantMessages(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+    const messages = await Notification.find({ merchantId: id }).sort({ createdAt: -1 })
+
+    res.status(200).json({
+      success: true,
+      data: messages,
     })
   } catch (error) {
     next(error)
