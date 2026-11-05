@@ -11,9 +11,26 @@ export interface AuthenticatedSocket extends Socket {
 }
 
 export function initSocket(httpServer: HttpServer): Server {
+  const allowedOrigins = [
+    'https://pgxgateway.com',
+    'https://www.pgxgateway.com',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+  ]
+
   io = new Server(httpServer, {
     cors: {
-      origin: config.corsOrigin === '*' ? true : [config.corsOrigin, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: (origin, callback) => {
+        if (!origin || config.corsOrigin === '*') {
+          return callback(null, true)
+        }
+        const configured = config.corsOrigin.split(',').map((o) => o.trim())
+        const allAllowed = [...allowedOrigins, ...configured]
+        if (allAllowed.includes(origin)) {
+          return callback(null, true)
+        }
+        return callback(null, false)
+      },
       methods: ['GET', 'POST'],
       credentials: true,
     },

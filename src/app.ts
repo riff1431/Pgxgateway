@@ -19,9 +19,26 @@ export function createApp() {
   )
 
   // CORS configuration
+  const allowedOrigins = [
+    'https://pgxgateway.com',
+    'https://www.pgxgateway.com',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+  ]
+
   app.use(
     cors({
-      origin: config.corsOrigin === '*' ? true : [config.corsOrigin, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: (origin, callback) => {
+        if (!origin || config.corsOrigin === '*') {
+          return callback(null, true)
+        }
+        const configured = config.corsOrigin.split(',').map((o) => o.trim())
+        const allAllowed = [...allowedOrigins, ...configured]
+        if (allAllowed.includes(origin)) {
+          return callback(null, true)
+        }
+        return callback(null, false)
+      },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
