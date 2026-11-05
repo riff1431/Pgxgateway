@@ -4,7 +4,7 @@ import { signToken } from '../utils/jwt.js'
 import { Merchant } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
 import { SystemConfig } from '../models/SystemConfig.js'
-import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
+import { emitToMerchant, emitToAdmins, WS_EVENTS } from '../services/socket.service.js'
 
 // Admin Login
 export async function adminLogin(req: Request, res: Response, next: NextFunction) {
@@ -140,13 +140,18 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
 
     merchant.applicationStatus = status
 
+    let offerWasProvided = false
     if (offer && typeof offer === 'object') {
+      offerWasProvided = true
+      const isNowAvailable = offer.isAvailable !== undefined ? Boolean(offer.isAvailable) : true
       merchant.offer = {
         rate: offer.rate || merchant.offer?.rate || '2.9% + $0.30',
         volume: offer.volume || merchant.offer?.volume || 'Up to $250,000',
         settlement: offer.settlement || merchant.offer?.settlement || 'Daily (Next Day)',
         reserve: offer.reserve || merchant.offer?.reserve || '5% (90 Days)',
-        isAvailable: offer.isAvailable !== undefined ? Boolean(offer.isAvailable) : true,
+        isAvailable: isNowAvailable,
+        accepted: offer.accepted !== undefined ? Boolean(offer.accepted) : (merchant.offer?.accepted || false),
+        acceptedAt: merchant.offer?.acceptedAt,
       }
     }
 
@@ -155,24 +160,38 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
     // Create In-App Notification for the Merchant
     let notifTitle = 'Application Status Updated'
     let notifContent = notes || `Your merchant application status is now ${status.toUpperCase()}.`
+    const labels = [status === 'approved' ? 'Approved' : status === 'rejected' ? 'Declined' : 'Underwriting']
 
     if (status === 'approved') {
-      notifTitle = 'Application Approved! 🎉'
+      notifTitle = 'Application Approved & Offer Live! 🎉'
       notifContent =
         notes ||
-        `Congratulations! Your merchant account for ${merchant.legalName || merchant.fullName} has been approved. Your custom processing rates are now active.`
+        `Congratulations! Your merchant account for ${merchant.legalName || merchant.fullName} has been approved. Your custom processing rates (${merchant.offer?.rate || 'Tier 1'}) are available. Please accept to proceed.`
+      labels.push('Offer Active')
+    } else if (offerWasProvided && merchant.offer?.isAvailable) {
+      notifTitle = 'Processing Offer Submitted! 📋'
+      notifContent =
+        notes ||
+        `PGX Underwriting has generated your processing offer (${merchant.offer.rate}, ${merchant.offer.volume}). Please view your offer and accept to proceed.`
+      labels.push('Offer Available')
     } else if (status === 'rejected') {
       notifTitle = 'Application Update'
       notifContent =
         notes ||
         'Your merchant application could not be approved at this time. Please contact our underwriting desk for assistance.'
+      labels.push('Action Required')
     }
 
     const notification = await Notification.create({
       merchantId: merchant._id,
+      senderRole: 'system',
+      senderName: 'PGX Underwriting Team',
       title: notifTitle,
       content: notifContent,
-      type: status === 'approved' ? 'offer' : 'compliance',
+      type: (status === 'approved' || (offerWasProvided && merchant.offer?.isAvailable)) ? 'offer' : 'compliance',
+      priority: (status === 'approved' || (offerWasProvided && merchant.offer?.isAvailable)) ? 'high' : 'normal',
+      labels,
+      isRead: false,
     })
 
     const unreadCount = await Notification.countDocuments({
@@ -184,6 +203,11 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
     emitToMerchant(String(merchant._id), WS_EVENTS.APPLICATION_UPDATED, {
       applicationStatus: merchant.applicationStatus,
       currentStep: merchant.currentStep,
+      offer: merchant.offer,
+      timestamp: new Date().toISOString(),
+    })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.OFFER_UPDATED, {
       offer: merchant.offer,
       timestamp: new Date().toISOString(),
     })
@@ -230,9 +254,9 @@ export async function getAdminStats(_req: Request, res: Response, next: NextFunc
 // Get System Branding & Settings
 export async function getSystemConfig(_req: Request, res: Response, next: NextFunction) {
   try {
-    let config = await SystemConfig.findOne()
-    if (!config) {
-      config = await SystemConfig.create({
+    let configDoc = await SystemConfig.findOne()
+    if (!configDoc) {
+      configDoc = await SystemConfig.create({
         siteName: 'PGX Gateway',
         logoUrl: '',
         faviconUrl: '/favicon.svg',
@@ -244,7 +268,7 @@ export async function getSystemConfig(_req: Request, res: Response, next: NextFu
     }
     res.status(200).json({
       success: true,
-      data: config,
+      data: configDoc,
     })
   } catch (error) {
     next(error)
@@ -256,25 +280,25 @@ export async function updateSystemConfig(req: Request, res: Response, next: Next
   try {
     const { siteName, logoUrl, faviconUrl, supportEmail, supportPhone, supportTelegram, supportWhatsapp } = req.body
 
-    let config = await SystemConfig.findOne()
-    if (!config) {
-      config = new SystemConfig()
+    let configDoc = await SystemConfig.findOne()
+    if (!configDoc) {
+      configDoc = new SystemConfig()
     }
 
-    if (siteName !== undefined) config.siteName = siteName.trim()
-    if (logoUrl !== undefined) config.logoUrl = logoUrl.trim()
-    if (faviconUrl !== undefined) config.faviconUrl = faviconUrl.trim()
-    if (supportEmail !== undefined) config.supportEmail = supportEmail.trim()
-    if (supportPhone !== undefined) config.supportPhone = supportPhone.trim()
-    if (supportTelegram !== undefined) config.supportTelegram = supportTelegram.trim()
-    if (supportWhatsapp !== undefined) config.supportWhatsapp = supportWhatsapp.trim()
+    if (siteName !== undefined) configDoc.siteName = siteName.trim()
+    if (logoUrl !== undefined) configDoc.logoUrl = logoUrl.trim()
+    if (faviconUrl !== undefined) configDoc.faviconUrl = faviconUrl.trim()
+    if (supportEmail !== undefined) configDoc.supportEmail = supportEmail.trim()
+    if (supportPhone !== undefined) configDoc.supportPhone = supportPhone.trim()
+    if (supportTelegram !== undefined) configDoc.supportTelegram = supportTelegram.trim()
+    if (supportWhatsapp !== undefined) configDoc.supportWhatsapp = supportWhatsapp.trim()
 
-    await config.save()
+    await configDoc.save()
 
     res.status(200).json({
       success: true,
       message: 'Branding and system settings updated successfully.',
-      data: config,
+      data: configDoc,
     })
   } catch (error) {
     next(error)
@@ -285,7 +309,14 @@ export async function updateSystemConfig(req: Request, res: Response, next: Next
 export async function sendMessageToMerchant(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
-    const { title, content, type = 'general' } = req.body
+    const {
+      title,
+      content,
+      type = 'general',
+      priority = 'normal',
+      labels = ['Underwriting'],
+      replyTo = null,
+    } = req.body
 
     if (!title || !content) {
       return res.status(400).json({
@@ -302,11 +333,20 @@ export async function sendMessageToMerchant(req: Request, res: Response, next: N
       })
     }
 
+    const sanitizedLabels = Array.isArray(labels) && labels.length > 0 ? labels : ['Underwriting']
+
     const notification = await Notification.create({
       merchantId: merchant._id,
+      senderRole: 'admin',
+      senderName: 'PGX Underwriting Desk',
       title: title.trim(),
       content: content.trim(),
-      type: ['system', 'offer', 'document', 'general'].includes(type) ? type : 'general',
+      type: ['system', 'offer', 'document', 'general', 'compliance', 'support'].includes(type)
+        ? type
+        : 'general',
+      priority: ['low', 'normal', 'high', 'urgent'].includes(priority) ? priority : 'normal',
+      labels: sanitizedLabels,
+      replyTo: replyTo || null,
       isRead: false,
     })
 
@@ -319,6 +359,17 @@ export async function sendMessageToMerchant(req: Request, res: Response, next: N
     emitToMerchant(String(merchant._id), WS_EVENTS.NEW_NOTIFICATION, {
       notification,
       unreadCount,
+    })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.NEW_MESSAGE, {
+      notification,
+      unreadCount,
+    })
+
+    // Also inform other admins in the desk
+    emitToAdmins(WS_EVENTS.NEW_MESSAGE, {
+      message: notification,
+      merchantId: merchant._id,
     })
 
     res.status(201).json({
@@ -336,6 +387,34 @@ export async function getMerchantMessages(req: Request, res: Response, next: Nex
   try {
     const { id } = req.params
     const messages = await Notification.find({ merchantId: id }).sort({ createdAt: -1 })
+
+    res.status(200).json({
+      success: true,
+      data: messages,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Get All Messages Across All Merchants for Admin Center
+export async function getAllMessages(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { type, unreadOnly } = req.query
+    const query: Record<string, unknown> = {}
+
+    if (type && type !== 'all') {
+      query.type = type
+    }
+
+    if (unreadOnly === 'true') {
+      query.isRead = false
+    }
+
+    const messages = await Notification.find(query)
+      .populate('merchantId', 'fullName businessEmail legalName phone')
+      .sort({ createdAt: -1 })
+      .limit(100)
 
     res.status(200).json({
       success: true,

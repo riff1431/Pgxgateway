@@ -205,12 +205,70 @@ export async function getProcessingOffer(req: AuthRequest, res: Response, next: 
     res.status(200).json({
       success: true,
       data: merchant.offer || {
-        rate: '2.9% + $0.30',
-        volume: 'Up to $250,000',
-        settlement: 'Daily (Next Day)',
-        reserve: '5% (90 Days)',
-        isAvailable: true,
+        rate: '',
+        volume: '',
+        settlement: '',
+        reserve: '',
+        isAvailable: false,
+        accepted: false,
       },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Accept Processing Offer
+export async function acceptProcessingOffer(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    const merchant = await Merchant.findById(merchantId)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    if (!merchant.offer?.isAvailable) {
+      return res.status(400).json({
+        success: false,
+        message: 'No processing offer is available to accept yet. Please check back every 24hrs.',
+      })
+    }
+
+    merchant.offer.accepted = true
+    merchant.offer.acceptedAt = new Date()
+    await merchant.save()
+
+    // Notification
+    const notif = await Notification.create({
+      merchantId: merchant._id,
+      senderRole: 'system',
+      senderName: 'PGX Underwriting Team',
+      title: 'Processing Agreement Confirmed 🎉',
+      content: `Your acceptance of the processing terms (${merchant.offer.rate}, ${merchant.offer.volume}) has been recorded. Commercial schedule is locked in.`,
+      type: 'offer',
+      priority: 'high',
+      labels: ['Offer Accepted', 'Terms Confirmed'],
+      isRead: false,
+    })
+
+    const unreadCount = await Notification.countDocuments({
+      merchantId: merchant._id,
+      isRead: false,
+    })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.OFFER_UPDATED, {
+      offer: merchant.offer,
+      timestamp: new Date().toISOString(),
+    })
+    emitToMerchant(String(merchant._id), WS_EVENTS.NEW_NOTIFICATION, {
+      notification: notif,
+      unreadCount,
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Processing offer accepted successfully.',
+      data: merchant.offer,
     })
   } catch (error) {
     next(error)

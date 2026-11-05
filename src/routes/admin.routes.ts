@@ -9,6 +9,7 @@ import {
   updateSystemConfig,
   sendMessageToMerchant,
   getMerchantMessages,
+  getAllMessages,
 } from '../controllers/admin.controller.js'
 import { adminProtect } from '../middleware/admin.middleware.js'
 
@@ -35,5 +36,6 @@ router.patch('/config', updateSystemConfig)
 // Two-Way Direct Messaging with Merchants
 router.post('/merchants/:id/message', sendMessageToMerchant)
 router.get('/merchants/:id/messages', getMerchantMessages)
+router.get('/messages/all', getAllMessages)
 
 export default router

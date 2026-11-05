@@ -43,6 +43,14 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       password,
       currentStep: 1,
       applicationStatus: 'draft',
+      offer: {
+        rate: '',
+        volume: '',
+        settlement: '',
+        reserve: '',
+        isAvailable: false,
+        accepted: false,
+      },
     })
 
     // Seed default notifications matching the frontend "Messages (2)" badge
@@ -55,9 +63,9 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       },
       {
         merchantId: merchant._id,
-        title: 'Processing Offer Ready for Review',
-        content: 'Your customized 2.9% + $0.30 processing offer is available on your dashboard.',
-        type: 'offer',
+        title: 'Underwriting Review',
+        content: 'Your account is in queue. Please check back every 24hrs to see if offer is available and accept to proceed.',
+        type: 'system',
       },
     ])
 

@@ -5,6 +5,7 @@ import {
   submitApplication,
   getApplicationStatus,
   getProcessingOffer,
+  acceptProcessingOffer,
   submitRegistration,
   getMerchantByEmail,
 } from '../controllers/merchant.controller.js'
@@ -30,6 +31,7 @@ router.post('/submit', protect, submitApplication)
 // Dashboard Live Data
 router.get('/status', protect, getApplicationStatus)
 router.get('/offer', protect, getProcessingOffer)
+router.post('/offer/accept', protect, acceptProcessingOffer)
 
 // Backward-compatible fallback routes
 router.post('/register', submitRegistration)

@@ -56,6 +56,8 @@ export interface IMerchant extends Document {
     settlement: string
     reserve: string
     isAvailable: boolean
+    accepted?: boolean
+    acceptedAt?: Date
   }
 
   createdAt: Date
@@ -119,11 +121,13 @@ const MerchantSchema = new Schema<IMerchant>(
 
     // Processing Offer details
     offer: {
-      rate: { type: String, default: '2.9% + $0.30' },
-      volume: { type: String, default: 'Up to $250,000' },
-      settlement: { type: String, default: 'Daily (Next Day)' },
-      reserve: { type: String, default: '5% (90 Days)' },
-      isAvailable: { type: Boolean, default: true },
+      rate: { type: String, default: '' },
+      volume: { type: String, default: '' },
+      settlement: { type: String, default: '' },
+      reserve: { type: String, default: '' },
+      isAvailable: { type: Boolean, default: false },
+      accepted: { type: Boolean, default: false },
+      acceptedAt: { type: Date },
     },
   },
   {
