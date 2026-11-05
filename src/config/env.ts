@@ -11,4 +11,10 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   jwtSecret: process.env.JWT_SECRET || 'pgx_secret_key_super_secure_jwt_token_2026_fintech_auth',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'wumsaw2a',
+    apiKey: process.env.CLOUDINARY_API_KEY || '276828639658817',
+    apiSecret: process.env.CLOUDINARY_API_SECRET || 'r4otxf3HaqwbyJIo4D4NXK8WRT4',
+    url: process.env.CLOUDINARY_URL || 'cloudinary://276828639658817:r4otxf3HaqwbyJIo4D4NXK8WRT4@wumsaw2a',
+  },
 }

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express'
 import { Merchant } from '../models/Merchant.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
 import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
+import { uploadBufferToCloudinary } from '../config/cloudinary.js'
 
 // Update Step 2: Business & Processing Information
 export async function updateStep2(req: AuthRequest, res: Response, next: NextFunction) {
@@ -46,7 +47,7 @@ export async function updateStep2(req: AuthRequest, res: Response, next: NextFun
   }
 }
 
-// Upload Step 3 Documents (Business Registration, Director ID, Statement)
+// Upload Step 3 Documents (Directly stream to Cloudinary)
 export async function uploadStep3Documents(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const merchantId = req.user!._id
@@ -59,9 +60,12 @@ export async function uploadStep3Documents(req: AuthRequest, res: Response, next
     if (files?.businessRegDoc?.[0]) {
       const file = files.businessRegDoc[0]
       const sizeMB = (file.size / (1024 * 1024)).toFixed(1)
+      const cloudRes = await uploadBufferToCloudinary(file.buffer, file.originalname, 'pgxgateway/business_registration')
+
       updateFields.businessRegDoc = {
         name: file.originalname,
-        path: `/uploads/documents/${file.filename}`,
+        url: cloudRes.url,
+        path: cloudRes.publicId,
         size: `${sizeMB} MB`,
         uploadedAt: new Date(),
       }
@@ -70,9 +74,12 @@ export async function uploadStep3Documents(req: AuthRequest, res: Response, next
     if (files?.directorIdDoc?.[0]) {
       const file = files.directorIdDoc[0]
       const sizeMB = (file.size / (1024 * 1024)).toFixed(1)
+      const cloudRes = await uploadBufferToCloudinary(file.buffer, file.originalname, 'pgxgateway/director_id')
+
       updateFields.directorIdDoc = {
         name: file.originalname,
-        path: `/uploads/documents/${file.filename}`,
+        url: cloudRes.url,
+        path: cloudRes.publicId,
         size: `${sizeMB} MB`,
         uploadedAt: new Date(),
       }
@@ -81,9 +88,12 @@ export async function uploadStep3Documents(req: AuthRequest, res: Response, next
     if (files?.processingStatementDoc?.[0]) {
       const file = files.processingStatementDoc[0]
       const sizeMB = (file.size / (1024 * 1024)).toFixed(1)
+      const cloudRes = await uploadBufferToCloudinary(file.buffer, file.originalname, 'pgxgateway/processing_statements')
+
       updateFields.processingStatementDoc = {
         name: file.originalname,
-        path: `/uploads/documents/${file.filename}`,
+        url: cloudRes.url,
+        path: cloudRes.publicId,
         size: `${sizeMB} MB`,
         uploadedAt: new Date(),
       }
@@ -95,7 +105,7 @@ export async function uploadStep3Documents(req: AuthRequest, res: Response, next
 
     res.status(200).json({
       success: true,
-      message: 'Documents uploaded successfully.',
+      message: 'Documents uploaded to Cloudinary successfully.',
       data: {
         businessRegDoc: updated?.businessRegDoc,
         directorIdDoc: updated?.directorIdDoc,

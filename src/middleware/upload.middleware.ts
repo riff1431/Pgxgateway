@@ -1,24 +1,8 @@
 import multer from 'multer'
 import path from 'node:path'
-import fs from 'node:fs'
 
-const uploadDir = path.resolve(process.cwd(), 'uploads/documents')
-
-// Ensure upload directory exists
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true })
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDir)
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname)
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`)
-  },
-})
+// In-memory buffer storage for direct Cloudinary streaming
+const storage = multer.memoryStorage()
 
 export const uploadDocs = multer({
   storage,
