@@ -42,7 +42,7 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       telegram: telegram?.trim(),
       password,
       currentStep: 1,
-      applicationStatus: 'under_review',
+      applicationStatus: 'draft',
     })
 
     // Seed default notifications matching the frontend "Messages (2)" badge
