@@ -1,6 +1,204 @@
 import { Request, Response, NextFunction } from 'express'
 import { Merchant } from '../models/Merchant.js'
+import { AuthRequest } from '../middleware/auth.middleware.js'
 
+// Update Step 2: Business & Processing Information
+export async function updateStep2(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    const {
+      legalName,
+      industry,
+      website,
+      yearsInBusiness,
+      currentProcessor,
+      monthlyVolume,
+      avgTransaction,
+      chargebackRate,
+      switchReason,
+    } = req.body
+
+    const updated = await Merchant.findByIdAndUpdate(
+      merchantId,
+      {
+        legalName,
+        industry,
+        website,
+        yearsInBusiness,
+        currentProcessor,
+        monthlyVolume,
+        avgTransaction,
+        chargebackRate,
+        switchReason,
+        currentStep: 2,
+      },
+      { new: true, runValidators: true }
+    )
+
+    res.status(200).json({
+      success: true,
+      message: 'Business information updated successfully. Step 2 completed.',
+      data: updated,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Upload Step 3 Documents (Business Registration, Director ID, Statement)
+export async function uploadStep3Documents(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] }
+
+    const updateFields: Record<string, unknown> = {
+      currentStep: 3,
+    }
+
+    if (files?.businessRegDoc?.[0]) {
+      const file = files.businessRegDoc[0]
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1)
+      updateFields.businessRegDoc = {
+        name: file.originalname,
+        path: `/uploads/documents/${file.filename}`,
+        size: `${sizeMB} MB`,
+        uploadedAt: new Date(),
+      }
+    }
+
+    if (files?.directorIdDoc?.[0]) {
+      const file = files.directorIdDoc[0]
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1)
+      updateFields.directorIdDoc = {
+        name: file.originalname,
+        path: `/uploads/documents/${file.filename}`,
+        size: `${sizeMB} MB`,
+        uploadedAt: new Date(),
+      }
+    }
+
+    if (files?.processingStatementDoc?.[0]) {
+      const file = files.processingStatementDoc[0]
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1)
+      updateFields.processingStatementDoc = {
+        name: file.originalname,
+        path: `/uploads/documents/${file.filename}`,
+        size: `${sizeMB} MB`,
+        uploadedAt: new Date(),
+      }
+    }
+
+    const updated = await Merchant.findByIdAndUpdate(merchantId, updateFields, {
+      new: true,
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Documents uploaded successfully.',
+      data: {
+        businessRegDoc: updated?.businessRegDoc,
+        directorIdDoc: updated?.directorIdDoc,
+        processingStatementDoc: updated?.processingStatementDoc,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Final Submit Application (Consent confirmation & Under Review)
+export async function submitApplication(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    const { agreedToTerms } = req.body
+
+    if (!agreedToTerms) {
+      return res.status(400).json({
+        success: false,
+        message: 'You must confirm the information accuracy and accept the Terms of Service.',
+      })
+    }
+
+    const updated = await Merchant.findByIdAndUpdate(
+      merchantId,
+      {
+        agreedToTerms: true,
+        currentStep: 3,
+        applicationStatus: 'under_review',
+      },
+      { new: true }
+    )
+
+    res.status(200).json({
+      success: true,
+      message: 'Application submitted successfully. It is now under review.',
+      data: {
+        applicationStatus: updated?.applicationStatus,
+        currentStep: updated?.currentStep,
+        offer: updated?.offer,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Get Application Status (Powers the Dashboard Status Card)
+export async function getApplicationStatus(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchant = req.user!
+
+    res.status(200).json({
+      success: true,
+      data: {
+        status: merchant.applicationStatus, // 'under_review' | 'approved' | etc.
+        currentStep: merchant.currentStep,
+        steps: [
+          {
+            step: 1,
+            title: 'Account & Contact',
+            isCompleted: true,
+          },
+          {
+            step: 2,
+            title: 'Business & Processing',
+            isCompleted: Boolean(merchant.legalName && merchant.industry),
+          },
+          {
+            step: 3,
+            title: 'Verification & Documents',
+            isCompleted: merchant.agreedToTerms,
+            isActive: merchant.applicationStatus === 'under_review',
+          },
+        ],
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Get Processing Offer (Powers the Dashboard Offer Card)
+export async function getProcessingOffer(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchant = req.user!
+
+    res.status(200).json({
+      success: true,
+      data: merchant.offer || {
+        rate: '2.9% + $0.30',
+        volume: 'Up to $250,000',
+        settlement: 'Daily (Next Day)',
+        reserve: '5% (90 Days)',
+        isAvailable: true,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Backward-compatible public registration for unauthenticated one-shot submissions
 export async function submitRegistration(req: Request, res: Response, next: NextFunction) {
   try {
     const {
@@ -19,9 +217,6 @@ export async function submitRegistration(req: Request, res: Response, next: Next
       avgTransaction,
       chargebackRate,
       switchReason,
-      businessRegDoc,
-      directorIdDoc,
-      processingStatementDoc,
       agreedToTerms,
       currentStep = 3,
     } = req.body
@@ -33,7 +228,6 @@ export async function submitRegistration(req: Request, res: Response, next: Next
       })
     }
 
-    // Upsert merchant record by businessEmail
     const merchant = await Merchant.findOneAndUpdate(
       { businessEmail: businessEmail.toLowerCase().trim() },
       {
@@ -52,9 +246,6 @@ export async function submitRegistration(req: Request, res: Response, next: Next
         avgTransaction,
         chargebackRate,
         switchReason,
-        ...(businessRegDoc && { businessRegDoc }),
-        ...(directorIdDoc && { directorIdDoc }),
-        ...(processingStatementDoc && { processingStatementDoc }),
         agreedToTerms: Boolean(agreedToTerms),
         currentStep,
         applicationStatus: 'under_review',
@@ -87,38 +278,6 @@ export async function getMerchantByEmail(req: Request, res: Response, next: Next
     res.status(200).json({
       success: true,
       data: merchant,
-    })
-  } catch (error) {
-    next(error)
-  }
-}
-
-export async function getLatestApplication(_req: Request, res: Response, next: NextFunction) {
-  try {
-    // Return latest application or a sample mock for dashboard initialization
-    const latest = await Merchant.findOne().sort({ createdAt: -1 })
-
-    if (!latest) {
-      return res.status(200).json({
-        success: true,
-        data: {
-          fullName: 'Merchant',
-          applicationStatus: 'under_review',
-          currentStep: 3,
-          offer: {
-            rate: '2.9% + $0.30',
-            volume: 'Up to $250,000',
-            settlement: 'Daily (Next Day)',
-            reserve: '5% (90 Days)',
-            isAvailable: true,
-          },
-        },
-      })
-    }
-
-    res.status(200).json({
-      success: true,
-      data: latest,
     })
   } catch (error) {
     next(error)

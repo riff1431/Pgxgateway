@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose'
+import bcrypt from 'bcryptjs'
 
 export interface IMerchant extends Document {
   // Account Information (Step 1)
@@ -24,18 +25,21 @@ export interface IMerchant extends Document {
   businessRegDoc?: {
     name: string
     url?: string
+    path?: string
     size?: string
     uploadedAt: Date
   }
   directorIdDoc?: {
     name: string
     url?: string
+    path?: string
     size?: string
     uploadedAt: Date
   }
   processingStatementDoc?: {
     name: string
     url?: string
+    path?: string
     size?: string
     uploadedAt: Date
   }
@@ -56,6 +60,8 @@ export interface IMerchant extends Document {
 
   createdAt: Date
   updatedAt: Date
+
+  comparePassword(candidatePassword: string): Promise<boolean>
 }
 
 const MerchantSchema = new Schema<IMerchant>(
@@ -83,18 +89,21 @@ const MerchantSchema = new Schema<IMerchant>(
     businessRegDoc: {
       name: String,
       url: String,
+      path: String,
       size: String,
       uploadedAt: { type: Date, default: Date.now },
     },
     directorIdDoc: {
       name: String,
       url: String,
+      path: String,
       size: String,
       uploadedAt: { type: Date, default: Date.now },
     },
     processingStatementDoc: {
       name: String,
       url: String,
+      path: String,
       size: String,
       uploadedAt: { type: Date, default: Date.now },
     },
@@ -121,5 +130,26 @@ const MerchantSchema = new Schema<IMerchant>(
     timestamps: true,
   }
 )
+
+// Pre-save hook: Hash password before saving if modified
+MerchantSchema.pre('save', async function (next) {
+  if (!this.isModified('password') || !this.password) {
+    return next()
+  }
+
+  try {
+    const salt = await bcrypt.genSalt(10)
+    this.password = await bcrypt.hash(this.password, salt)
+    next()
+  } catch (err) {
+    next(err as Error)
+  }
+})
+
+// Compare password method
+MerchantSchema.methods.comparePassword = async function (candidatePassword: string): Promise<boolean> {
+  if (!this.password) return false
+  return bcrypt.compare(candidatePassword, this.password)
+}
 
 export const Merchant = mongoose.model<IMerchant>('Merchant', MerchantSchema)

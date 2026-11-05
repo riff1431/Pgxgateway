@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import morgan from 'morgan'
+import path from 'node:path'
 import { config } from './config/env.js'
 import apiRouter from './routes/index.js'
 import { errorHandler } from './middleware/errorHandler.js'
@@ -10,8 +11,12 @@ import { notFound } from './middleware/notFound.js'
 export function createApp() {
   const app = express()
 
-  // Security headers
-  app.use(helmet())
+  // Security headers (configured to allow static asset serving)
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    })
+  )
 
   // CORS configuration
   app.use(
@@ -29,8 +34,12 @@ export function createApp() {
   }
 
   // Body parsers
-  app.use(express.json({ limit: '10mb' }))
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+  app.use(express.json({ limit: '15mb' }))
+  app.use(express.urlencoded({ extended: true, limit: '15mb' }))
+
+  // Serve uploaded files statically
+  const uploadsPath = path.resolve(process.cwd(), 'uploads')
+  app.use('/uploads', express.static(uploadsPath))
 
   // Root endpoint
   app.get('/', (_req, res) => {
@@ -38,7 +47,12 @@ export function createApp() {
       name: 'PGX Gateway API',
       version: '1.0.0',
       status: 'active',
-      docs: '/api/v1/health',
+      endpoints: {
+        health: '/api/v1/health',
+        auth: '/api/v1/auth',
+        merchants: '/api/v1/merchants',
+        dashboard: '/api/v1/dashboard',
+      },
     })
   })
 

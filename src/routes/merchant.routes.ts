@@ -1,14 +1,38 @@
 import { Router } from 'express'
 import {
+  updateStep2,
+  uploadStep3Documents,
+  submitApplication,
+  getApplicationStatus,
+  getProcessingOffer,
   submitRegistration,
   getMerchantByEmail,
-  getLatestApplication,
 } from '../controllers/merchant.controller.js'
+import { protect } from '../middleware/auth.middleware.js'
+import { uploadDocs } from '../middleware/upload.middleware.js'
 
 const router = Router()
 
+// Multi-step Registration Flow
+router.patch('/step2', protect, updateStep2)
+router.post(
+  '/step3/upload',
+  protect,
+  uploadDocs.fields([
+    { name: 'businessRegDoc', maxCount: 1 },
+    { name: 'directorIdDoc', maxCount: 1 },
+    { name: 'processingStatementDoc', maxCount: 1 },
+  ]),
+  uploadStep3Documents
+)
+router.post('/submit', protect, submitApplication)
+
+// Dashboard Live Data
+router.get('/status', protect, getApplicationStatus)
+router.get('/offer', protect, getProcessingOffer)
+
+// Backward-compatible fallback routes
 router.post('/register', submitRegistration)
-router.get('/latest', getLatestApplication)
-router.get('/:email', getMerchantByEmail)
+router.get('/by-email/:email', getMerchantByEmail)
 
 export default router
