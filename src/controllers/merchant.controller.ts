@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { Merchant } from '../models/Merchant.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
+import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 
 // Update Step 2: Business & Processing Information
 export async function updateStep2(req: AuthRequest, res: Response, next: NextFunction) {
@@ -128,6 +129,14 @@ export async function submitApplication(req: AuthRequest, res: Response, next: N
       },
       { new: true }
     )
+
+    // Emit real-time WebSocket update to the merchant's private room
+    emitToMerchant(String(merchantId), WS_EVENTS.APPLICATION_UPDATED, {
+      applicationStatus: updated?.applicationStatus,
+      currentStep: updated?.currentStep,
+      offer: updated?.offer,
+      timestamp: new Date().toISOString(),
+    })
 
     res.status(200).json({
       success: true,

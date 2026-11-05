@@ -60,6 +60,18 @@ pgxgateway_be/
 
 ---
 
+### 3. Real-Time WebSockets (Socket.IO)
+* **Connection URL:** `ws://localhost:5000`
+* **Authentication:** Pass JWT via `auth: { token: '<jwt_token>' }`
+* **Private Room:** Each merchant joins `merchant:<merchantId>` automatically.
+* **Events:**
+  - `application:updated`: Real-time application status changes (e.g. from `under_review` to `approved`).
+  - `offer:updated`: Live processing offer term updates.
+  - `notification:new`: Real-time alerts and messages (updates unread count).
+  - `transaction:status`: Live payment checkout state changes.
+
+---
+
 ## Getting Started
 
 ```bash

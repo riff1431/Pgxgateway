@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express'
 import { Notification } from '../models/Notification.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
+import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 
 // Get all notifications/messages for the logged in merchant
 export async function getMessages(req: AuthRequest, res: Response, next: NextFunction) {
@@ -57,11 +58,19 @@ export async function createSupportTicket(req: AuthRequest, res: Response, next:
     const ticketId = `TICKET-${Date.now().toString().slice(-6)}`
 
     // Create confirmation notification
-    await Notification.create({
+    const notification = await Notification.create({
       merchantId: merchant._id,
       title: `Support Ticket Created: #${ticketId}`,
       content: `Your support request has been logged. Our fintech team will reach out to ${merchant.businessEmail} within 1 hour.`,
       type: 'system',
+    })
+
+    const unreadCount = await Notification.countDocuments({ merchantId: merchant._id, isRead: false })
+
+    // Real-time WebSocket emission to update the frontend badge live
+    emitToMerchant(String(merchant._id), WS_EVENTS.NEW_NOTIFICATION, {
+      notification,
+      unreadCount,
     })
 
     res.status(201).json({
