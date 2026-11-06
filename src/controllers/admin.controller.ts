@@ -5,6 +5,7 @@ import { Merchant } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
 import { SystemConfig } from '../models/SystemConfig.js'
 import { emitToMerchant, emitToAdmins, WS_EVENTS } from '../services/socket.service.js'
+import { uploadBufferToCloudinary } from '../config/cloudinary.js'
 
 // Admin Login
 export async function adminLogin(req: Request, res: Response, next: NextFunction) {
@@ -419,6 +420,36 @@ export async function getAllMessages(req: Request, res: Response, next: NextFunc
     res.status(200).json({
       success: true,
       data: messages,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Upload Branding Asset (Logo or Favicon) directly to Cloudinary
+export async function uploadBrandingAsset(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file provided for upload.',
+      })
+    }
+
+    const file = req.file
+    const folder = (req.body?.folder as string) || 'pgxgateway/branding'
+    const cloudRes = await uploadBufferToCloudinary(file.buffer, file.originalname, folder)
+
+    res.status(200).json({
+      success: true,
+      message: 'Asset uploaded to Cloudinary successfully.',
+      data: {
+        url: cloudRes.url,
+        publicId: cloudRes.publicId,
+        format: cloudRes.format,
+        bytes: cloudRes.bytes,
+        name: file.originalname,
+      },
     })
   } catch (error) {
     next(error)

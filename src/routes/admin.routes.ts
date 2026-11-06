@@ -10,8 +10,10 @@ import {
   sendMessageToMerchant,
   getMerchantMessages,
   getAllMessages,
+  uploadBrandingAsset,
 } from '../controllers/admin.controller.js'
 import { adminProtect } from '../middleware/admin.middleware.js'
+import { uploadImage } from '../middleware/upload.middleware.js'
 
 const router = Router()
 
@@ -32,6 +34,7 @@ router.patch('/applications/:id/review', reviewApplication)
 // White-Label & System Branding Configuration
 router.get('/config', getSystemConfig)
 router.patch('/config', updateSystemConfig)
+router.post('/upload-branding', uploadImage.single('file'), uploadBrandingAsset)
 
 // Two-Way Direct Messaging with Merchants
 router.post('/merchants/:id/message', sendMessageToMerchant)

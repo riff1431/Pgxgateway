@@ -20,3 +20,20 @@ export const uploadDocs = multer({
     }
   },
 })
+
+export const uploadImage = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10 MB maximum
+  },
+  fileFilter: (_req, file, cb) => {
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.svg', '.webp', '.ico', '.gif']
+    const ext = path.extname(file.originalname).toLowerCase()
+
+    if (allowedExtensions.includes(ext)) {
+      cb(null, true)
+    } else {
+      cb(new Error('Invalid image type. Accepted formats: PNG, JPG, JPEG, SVG, WebP, ICO, GIF.'))
+    }
+  },
+})
