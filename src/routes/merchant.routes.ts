@@ -6,6 +6,7 @@ import {
   getApplicationStatus,
   getProcessingOffer,
   acceptProcessingOffer,
+  uploadAvatar,
   submitRegistration,
   getMerchantByEmail,
 } from '../controllers/merchant.controller.js'
@@ -32,6 +33,8 @@ router.post('/submit', protect, submitApplication)
 router.get('/status', protect, getApplicationStatus)
 router.get('/offer', protect, getProcessingOffer)
 router.post('/offer/accept', protect, acceptProcessingOffer)
+router.post('/avatar', protect, uploadDocs.single('avatar'), uploadAvatar)
+router.patch('/avatar', protect, uploadAvatar)
 
 // Backward-compatible fallback routes
 router.post('/register', submitRegistration)

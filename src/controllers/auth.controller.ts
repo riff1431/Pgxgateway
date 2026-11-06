@@ -142,6 +142,7 @@ export async function login(req: Request, res: Response, next: NextFunction) {
         fullName: merchant.fullName,
         businessEmail: merchant.businessEmail,
         phone: merchant.phone,
+        avatarUrl: merchant.avatarUrl || '',
         currentStep: merchant.currentStep,
         applicationStatus: merchant.applicationStatus,
         offer: merchant.offer,
@@ -171,6 +172,7 @@ export async function getMe(req: AuthRequest, res: Response, next: NextFunction)
         phone: merchant.phone,
         whatsapp: merchant.whatsapp,
         telegram: merchant.telegram,
+        avatarUrl: merchant.avatarUrl || '',
         legalName: merchant.legalName,
         industry: merchant.industry,
         website: merchant.website,
@@ -199,13 +201,14 @@ export async function getMe(req: AuthRequest, res: Response, next: NextFunction)
 export async function updateProfile(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const merchantId = req.user!._id
-    const { fullName, phone, whatsapp, telegram } = req.body
+    const { fullName, phone, whatsapp, telegram, avatarUrl } = req.body
 
     const updateFields: Record<string, string> = {}
     if (fullName) updateFields.fullName = fullName.trim()
     if (phone) updateFields.phone = phone.trim()
     if (whatsapp !== undefined) updateFields.whatsapp = whatsapp.trim()
     if (telegram !== undefined) updateFields.telegram = telegram.trim()
+    if (avatarUrl !== undefined) updateFields.avatarUrl = avatarUrl.trim()
 
     const updated = await Merchant.findByIdAndUpdate(merchantId, updateFields, {
       new: true,

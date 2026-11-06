@@ -10,13 +10,13 @@ export const uploadDocs = multer({
     fileSize: 10 * 1024 * 1024, // 10 MB maximum
   },
   fileFilter: (_req, file, cb) => {
-    const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png']
+    const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg']
     const ext = path.extname(file.originalname).toLowerCase()
 
     if (allowedExtensions.includes(ext)) {
       cb(null, true)
     } else {
-      cb(new Error('Invalid file type. Only PDF, JPG, JPEG, and PNG files are accepted.'))
+      cb(new Error('Invalid file type. Only PDF, JPG, JPEG, PNG, WEBP, GIF, and SVG files are accepted.'))
     }
   },
 })

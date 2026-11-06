@@ -276,6 +276,54 @@ export async function acceptProcessingOffer(req: AuthRequest, res: Response, nex
   }
 }
 
+// Upload or Set Merchant Avatar
+export async function uploadAvatar(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    let avatarUrl = ''
+
+    if (req.file) {
+      const file = req.file
+      const cloudRes = await uploadBufferToCloudinary(
+        file.buffer,
+        file.originalname,
+        'pgxgateway/avatars'
+      )
+      avatarUrl = cloudRes.url
+    } else if (req.body.avatarUrl !== undefined) {
+      avatarUrl = String(req.body.avatarUrl).trim()
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'No avatar file or URL provided.',
+      })
+    }
+
+    const updated = await Merchant.findByIdAndUpdate(
+      merchantId,
+      { avatarUrl },
+      { new: true }
+    )
+
+    emitToMerchant(String(merchantId), WS_EVENTS.APPLICATION_UPDATED, {
+      applicationStatus: updated?.applicationStatus,
+      currentStep: updated?.currentStep,
+      offer: updated?.offer,
+      avatarUrl: updated?.avatarUrl,
+      timestamp: new Date().toISOString(),
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Avatar updated successfully.',
+      data: updated,
+      avatarUrl: updated?.avatarUrl,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 // Backward-compatible public registration for unauthenticated one-shot submissions
 export async function submitRegistration(req: Request, res: Response, next: NextFunction) {
   try {

@@ -46,6 +46,7 @@ export interface IMerchant extends Document {
   agreedToTerms: boolean
 
   // Status & Workflow
+  avatarUrl?: string
   currentStep: number
   applicationStatus: 'draft' | 'under_review' | 'approved' | 'rejected'
 
@@ -112,6 +113,7 @@ const MerchantSchema = new Schema<IMerchant>(
     agreedToTerms: { type: Boolean, default: false },
 
     // Workflow
+    avatarUrl: { type: String, default: '' },
     currentStep: { type: Number, default: 1, min: 1, max: 3 },
     applicationStatus: {
       type: String,
