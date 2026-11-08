@@ -20,6 +20,7 @@ import {
   getSuperAdminResellersList,
   updateResellerStatus,
   resetResellerPassword,
+  updateResellerFeeStructure,
   reassignMerchantReseller,
 } from '../controllers/admin.controller.js'
 import { adminProtect, superAdminOnly } from '../middleware/admin.middleware.js'
@@ -53,6 +54,7 @@ router.get('/super-resellers', superAdminOnly, getSuperAdminResellersList)
 router.post('/super-resellers', superAdminOnly, createResellerTenant)
 router.patch('/super-resellers/:resellerId/status', superAdminOnly, updateResellerStatus)
 router.post('/super-resellers/:resellerId/reset-password', superAdminOnly, resetResellerPassword)
+router.patch('/super-resellers/:resellerId/fees', superAdminOnly, updateResellerFeeStructure)
 router.patch('/super-merchants/:merchantId/reassign', superAdminOnly, reassignMerchantReseller)
 
 // White-Label & System Branding Configuration (Exclusively Super Admin)

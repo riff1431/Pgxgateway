@@ -569,7 +569,7 @@ export async function getResellerStripeConfig(req: AdminRequest, res: Response, 
           mode: 'test',
         },
         feeSettings: {
-          basePlatformFee: 9.0, // Hardwired 9%
+          basePlatformFee: 9.0, // Default 9%
           merchantFeeRate: 12.0,
         },
       })
@@ -638,13 +638,14 @@ export async function updateResellerStripeConfig(req: AdminRequest, res: Respons
       configDoc.stripe.mode = mode
     }
 
-    // Enforce Hardwired 9.0% Platform Fee Constraint
+    // Enforce Dynamic Platform Fee Constraint
     if (merchantFeeRate !== undefined) {
       const rateNum = parseFloat(merchantFeeRate)
-      if (isNaN(rateNum) || rateNum < 9.0) {
+      const baseFee = configDoc.feeSettings?.basePlatformFee ?? 9.0
+      if (isNaN(rateNum) || rateNum < baseFee) {
         return res.status(400).json({
           success: false,
-          message: 'Merchant fee rate cannot be set lower than the hardwired 9.0% platform base fee.',
+          message: `Merchant fee rate cannot be set lower than your base platform fee (${baseFee.toFixed(1)}%).`,
         })
       }
       configDoc.feeSettings.merchantFeeRate = rateNum
@@ -1032,6 +1033,87 @@ export async function resetResellerPassword(req: AdminRequest, res: Response, ne
   }
 }
 
+
+// Update Reseller Fee Structure & Spread (Super Admin Only)
+export async function updateResellerFeeStructure(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { resellerId } = req.params
+    const { basePlatformFee, merchantFeeRate, payoutTerms } = req.body
+
+    const baseFee = parseFloat(basePlatformFee)
+    const merchantRate = parseFloat(merchantFeeRate)
+
+    if (isNaN(baseFee) || baseFee < 0 || baseFee > 50) {
+      return res.status(400).json({
+        success: false,
+        message: 'Super Admin platform fee must be a valid number between 0% and 50%.',
+      })
+    }
+
+    if (isNaN(merchantRate) || merchantRate < baseFee || merchantRate > 50) {
+      return res.status(400).json({
+        success: false,
+        message: `Merchant fee rate cannot be set lower than the Super Admin platform fee (${baseFee.toFixed(1)}%).`,
+      })
+    }
+
+    if (resellerId === 'admin_root') {
+      let rootConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
+      if (!rootConfig) {
+        rootConfig = await ResellerConfig.create({
+          resellerId: 'admin_root',
+          name: 'Primary Gateway Administrator',
+          email: config.admin.email,
+          status: 'active',
+          feeSettings: {
+            basePlatformFee: baseFee,
+            merchantFeeRate: merchantRate,
+          },
+          payoutTerms: payoutTerms ? payoutTerms.trim() : 'Primary Root Settlement',
+        })
+      } else {
+        rootConfig.feeSettings.basePlatformFee = baseFee
+        rootConfig.feeSettings.merchantFeeRate = merchantRate
+        if (payoutTerms) rootConfig.payoutTerms = payoutTerms.trim()
+        await rootConfig.save()
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Fee structure for Primary Root Gateway updated (Platform: ${baseFee.toFixed(1)}%, Merchant: ${merchantRate.toFixed(1)}%).`,
+        data: rootConfig,
+      })
+    }
+
+    const updated = await ResellerConfig.findOneAndUpdate(
+      { resellerId },
+      {
+        $set: {
+          'feeSettings.basePlatformFee': baseFee,
+          'feeSettings.merchantFeeRate': merchantRate,
+          ...(payoutTerms ? { payoutTerms: payoutTerms.trim() } : {}),
+        },
+      },
+      { new: true }
+    )
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reseller tenant not found.',
+      })
+    }
+
+    const spread = (merchantRate - baseFee).toFixed(1)
+    return res.status(200).json({
+      success: true,
+      message: `Commercial terms updated: Super Admin ${baseFee.toFixed(1)}%, Merchant ${merchantRate.toFixed(1)}% (+${spread}% reseller margin spread).`,
+      data: updated,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
 
 // Reassign Sub-Merchant to another Reseller Tenant (Super Admin Only)
 export async function reassignMerchantReseller(req: AdminRequest, res: Response, next: NextFunction) {

@@ -85,13 +85,13 @@ async function processSuccessfulCheckout(
   const currency = (session.currency || 'USD').toUpperCase()
 
   // --- Financial Calculation Engine (Integer-Cent Precision) ---
-  // 1. Hardwired 9% Platform Fee for Super Admin
-  const platformFeeRate = 9.0
+  // 1. Dynamic Platform Fee for Super Admin
+  const platformFeeRate = resellerConfig.feeSettings?.basePlatformFee ?? 9.0
   const platformFeeCents = Math.round(grossCents * (platformFeeRate / 100))
   const platformFeeAmount = platformFeeCents / 100
 
-  // 2. Reseller Configured Rate (must be >= 9%)
-  const resellerFeeRate = Math.max(9.0, resellerConfig.feeSettings?.merchantFeeRate || 12.0)
+  // 2. Reseller Configured Rate (must be >= basePlatformFee)
+  const resellerFeeRate = Math.max(platformFeeRate, resellerConfig.feeSettings?.merchantFeeRate || 12.0)
   const resellerFeeCents = Math.round(grossCents * (resellerFeeRate / 100))
   const resellerFeeAmount = resellerFeeCents / 100
 
