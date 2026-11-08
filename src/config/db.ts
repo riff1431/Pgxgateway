@@ -1,5 +1,13 @@
+import dns from 'node:dns'
 import mongoose from 'mongoose'
 import { config } from './env.js'
+
+// Configure public DNS resolvers to ensure Atlas SRV lookups work reliably on Windows
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1'])
+} catch {
+  // Ignore in environments where custom DNS servers cannot be set
+}
 
 export async function connectDB(): Promise<void> {
   try {
