@@ -1,3 +1,5 @@
+import bcrypt from 'bcryptjs'
+import { AdminRequest } from '../middleware/admin.middleware.js'
 import { Request, Response, NextFunction } from 'express'
 import { config } from '../config/env.js'
 import { signToken } from '../utils/jwt.js'
@@ -9,7 +11,7 @@ import { Transaction } from '../models/Transaction.js'
 import { emitToMerchant, emitToAdmins, WS_EVENTS } from '../services/socket.service.js'
 import { uploadBufferToCloudinary } from '../config/cloudinary.js'
 
-// Admin Login
+// Admin / Reseller / Super Admin Login
 export async function adminLogin(req: Request, res: Response, next: NextFunction) {
   try {
     const { email, password } = req.body
@@ -23,36 +25,110 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
 
     const normalizedEmail = email.toLowerCase().trim()
 
-    if (
-      (normalizedEmail !== config.admin.email.toLowerCase() && normalizedEmail !== config.superAdmin.email.toLowerCase()) ||
-      (normalizedEmail === config.superAdmin.email.toLowerCase()
-        ? password !== config.superAdmin.password
-        : password !== config.admin.password)
-    ) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid administrative credentials.',
+    // 1. Super Admin authentication
+    if (normalizedEmail === config.superAdmin.email.toLowerCase()) {
+      if (password !== config.superAdmin.password) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid administrative credentials.',
+        })
+      }
+
+      const token = signToken({
+        id: 'super_admin_root',
+        email: normalizedEmail,
+        role: 'super_admin',
+      })
+
+      return res.status(200).json({
+        success: true,
+        message: 'Super Administrator authenticated successfully.',
+        token,
+        admin: {
+          email: normalizedEmail,
+          role: 'super_admin',
+          name: 'Super Administrator',
+        },
       })
     }
 
-    const isSuperAdmin = normalizedEmail === config.superAdmin.email.toLowerCase()
-    const role = isSuperAdmin ? 'super_admin' : 'admin'
-    const adminId = isSuperAdmin ? 'super_admin_root' : 'admin_root'
+    // 2. Root Admin authentication (Fallback / Primary Client)
+    if (normalizedEmail === config.admin.email.toLowerCase()) {
+      if (password !== config.admin.password) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid administrative credentials.',
+        })
+      }
 
-    const token = signToken({
-      id: adminId,
-      email: normalizedEmail,
-      role,
-    })
-
-    return res.status(200).json({
-      success: true,
-      message: `${isSuperAdmin ? 'Super Administrator' : 'Administrator'} authenticated successfully.`,
-      token,
-      admin: {
+      const token = signToken({
+        id: 'admin_root',
         email: normalizedEmail,
-        role,
-      },
+        role: 'admin',
+        resellerId: 'admin_root',
+      })
+
+      return res.status(200).json({
+        success: true,
+        message: 'Administrator authenticated successfully.',
+        token,
+        admin: {
+          email: normalizedEmail,
+          role: 'admin',
+          name: 'Primary Gateway Administrator',
+          resellerId: 'admin_root',
+        },
+      })
+    }
+
+    // 3. Dynamic Provisioned Reseller Authentication from Database
+    const reseller = await ResellerConfig.findOne({ email: normalizedEmail }).select('+passwordHash')
+    if (reseller) {
+      if (reseller.status === 'suspended') {
+        return res.status(403).json({
+          success: false,
+          message: 'Your reseller tenant account has been suspended. Please contact platform administration.',
+        })
+      }
+
+      if (!reseller.passwordHash) {
+        return res.status(401).json({
+          success: false,
+          message: 'Account password has not been initialized. Please contact platform administration.',
+        })
+      }
+
+      const isMatch = await bcrypt.compare(password, reseller.passwordHash)
+      if (!isMatch) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid administrative credentials.',
+        })
+      }
+
+      const token = signToken({
+        id: reseller.resellerId,
+        email: reseller.email || normalizedEmail,
+        role: 'admin',
+        resellerId: reseller.resellerId,
+      })
+
+      return res.status(200).json({
+        success: true,
+        message: 'Reseller administrator authenticated successfully.',
+        token,
+        admin: {
+          email: reseller.email || normalizedEmail,
+          role: 'admin',
+          name: reseller.name || 'Reseller Partner',
+          resellerId: reseller.resellerId,
+        },
+      })
+    }
+
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid administrative credentials.',
     })
   } catch (error) {
     next(error)
@@ -60,11 +136,18 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
 }
 
 // Get Applications List with Filtering & Search
-export async function getApplications(req: Request, res: Response, next: NextFunction) {
+export async function getApplications(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const { status, search, page = '1', limit = '20' } = req.query
 
     const query: Record<string, unknown> = {}
+
+    // Multi-tenant scoping: Resellers see only their transactions; Super Admin sees all (or filtered)
+    if (req.admin?.role === 'admin') {
+      query.resellerId = req.admin.resellerId || 'admin_root'
+    } else if (req.query.resellerId && req.query.resellerId !== 'all') {
+      query.resellerId = req.query.resellerId
+    }
 
     if (status && status !== 'all') {
       query.applicationStatus = status
@@ -470,9 +553,9 @@ export async function uploadBrandingAsset(req: Request, res: Response, next: Nex
 // ----------------------------------------------------------------------
 
 // Get Reseller's Stripe Configuration & Merchant Fee Settings
-export async function getResellerStripeConfig(req: Request, res: Response, next: NextFunction) {
+export async function getResellerStripeConfig(req: AdminRequest, res: Response, next: NextFunction) {
   try {
-    const resellerId = (req.query.resellerId as string) || 'admin_root'
+    const resellerId = req.admin?.role === 'super_admin' ? ((req.query.resellerId as string) || 'admin_root') : (req.admin?.resellerId || 'admin_root')
 
     let configDoc = await ResellerConfig.findOne({ resellerId })
     if (!configDoc) {
@@ -528,9 +611,9 @@ export async function getResellerStripeConfig(req: Request, res: Response, next:
 }
 
 // Update Reseller's Stripe Configuration & Fee Settings
-export async function updateResellerStripeConfig(req: Request, res: Response, next: NextFunction) {
+export async function updateResellerStripeConfig(req: AdminRequest, res: Response, next: NextFunction) {
   try {
-    const resellerId = (req.body.resellerId as string) || 'admin_root'
+    const resellerId = req.admin?.role === 'super_admin' ? ((req.body.resellerId as string) || 'admin_root') : (req.admin?.resellerId || 'admin_root')
     const { publishableKey, secretKey, webhookSecret, mode, merchantFeeRate } = req.body
 
     let configDoc = await ResellerConfig.findOne({ resellerId })
@@ -589,11 +672,17 @@ export async function updateResellerStripeConfig(req: Request, res: Response, ne
 }
 
 // Get All Transactions for Admin & Super Admin Ledger
-export async function getAdminTransactions(req: Request, res: Response, next: NextFunction) {
+export async function getAdminTransactions(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const { status, search, refId, page = '1', limit = '25' } = req.query
 
     const query: Record<string, unknown> = {}
+
+    if (req.admin?.role === 'admin') {
+      query.resellerId = req.admin.resellerId || 'admin_root'
+    } else if (req.query.resellerId && req.query.resellerId !== 'all') {
+      query.resellerId = req.query.resellerId
+    }
 
     if (status && status !== 'all') {
       query.status = status
@@ -717,6 +806,226 @@ export async function markMerchantPayout(req: Request, res: Response, next: Next
     res.status(200).json({
       success: true,
       message: `Payout of $${payoutAmount.toFixed(2)} recorded successfully for ${merchant.legalName || merchant.fullName}.`,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+
+// ----------------------------------------------------------------------
+// SUPER ADMIN RESELLER MANAGEMENT ENDPOINTS
+// ----------------------------------------------------------------------
+
+// Create / Provision New Reseller Tenant (Super Admin Only)
+export async function createResellerTenant(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { name, email, password, merchantFeeRate, payoutTerms } = req.body
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reseller company name, login email, and initial password are required.',
+      })
+    }
+
+    const normalizedEmail = email.toLowerCase().trim()
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid business email address.',
+      })
+    }
+
+    // Guard against reserved system emails
+    if (
+      normalizedEmail === config.superAdmin.email.toLowerCase() ||
+      normalizedEmail === config.admin.email.toLowerCase()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'This email is reserved for system administration.',
+      })
+    }
+
+    const existingReseller = await ResellerConfig.findOne({ email: normalizedEmail })
+    if (existingReseller) {
+      return res.status(400).json({
+        success: false,
+        message: 'A reseller with this email address already exists in the system.',
+      })
+    }
+
+    // Enforce 9.0% hardwired platform fee floor
+    const feeRateNum = parseFloat(merchantFeeRate)
+    const finalFeeRate = isNaN(feeRateNum) ? 12.0 : feeRateNum
+    if (finalFeeRate < 9.0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Merchant fee rate cannot be set lower than the hardwired 9.0% platform base fee.',
+      })
+    }
+
+    // Generate unique reseller slug & identifier
+    const cleanSlug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '_')
+      .replace(/_+/g, '_')
+      .slice(0, 16)
+      .replace(/^_+|_+$/g, '')
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000)
+    const resellerId = `reseller_${cleanSlug || 'tenant'}_${randomSuffix}`
+
+    // Hash the password securely with bcrypt
+    const passwordHash = await bcrypt.hash(password, 10)
+
+    const newReseller = await ResellerConfig.create({
+      resellerId,
+      name: name.trim(),
+      email: normalizedEmail,
+      passwordHash,
+      status: 'active',
+      feeSettings: {
+        basePlatformFee: 9.0,
+        merchantFeeRate: finalFeeRate,
+      },
+      payoutTerms: payoutTerms ? payoutTerms.trim() : 'Weekly Wire / Crypto Transfer',
+      createdBy: req.admin?.email || 'super_admin',
+    })
+
+    return res.status(201).json({
+      success: true,
+      message: 'Reseller tenant provisioned successfully.',
+      data: {
+        resellerId: newReseller.resellerId,
+        name: newReseller.name,
+        email: newReseller.email,
+        feeSettings: newReseller.feeSettings,
+        status: newReseller.status,
+        payoutTerms: newReseller.payoutTerms,
+        createdAt: newReseller.createdAt,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Get All Resellers List (Super Admin Only)
+export async function getSuperAdminResellersList(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const resellers = await ResellerConfig.find()
+      .select('resellerId name email status stripe.mode stripe.isConfigured feeSettings totalVolumeProcessed totalPlatformFeesEarned totalResellerProfit payoutTerms createdAt')
+      .sort({ createdAt: -1 })
+
+    const hasRoot = resellers.some((r) => r.resellerId === 'admin_root')
+    const result = [...resellers]
+
+    if (!hasRoot) {
+      result.unshift({
+        resellerId: 'admin_root',
+        name: 'Primary Gateway Administrator',
+        email: config.admin.email,
+        status: 'active',
+        stripe: { mode: 'test', isConfigured: false },
+        feeSettings: { basePlatformFee: 9.0, merchantFeeRate: 12.0 },
+        totalVolumeProcessed: 0,
+        totalPlatformFeesEarned: 0,
+        totalResellerProfit: 0,
+        payoutTerms: 'Default Settlement',
+        createdAt: new Date(),
+      } as any)
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Update Reseller Status (Active / Suspended) (Super Admin Only)
+export async function updateResellerStatus(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { resellerId } = req.params
+    const { status } = req.body
+
+    if (!['active', 'suspended'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be either 'active' or 'suspended'.",
+      })
+    }
+
+    if (resellerId === 'admin_root') {
+      return res.status(400).json({
+        success: false,
+        message: 'The root platform reseller account cannot be suspended.',
+      })
+    }
+
+    const updated = await ResellerConfig.findOneAndUpdate(
+      { resellerId },
+      { $set: { status } },
+      { new: true }
+    )
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reseller not found.',
+      })
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Reseller ${updated.name || resellerId} status updated to ${status}.`,
+      data: {
+        resellerId: updated.resellerId,
+        status: updated.status,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Reset Reseller Password (Super Admin Only)
+export async function resetResellerPassword(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { resellerId } = req.params
+    const { newPassword } = req.body
+
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters in length.',
+      })
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10)
+
+    const updated = await ResellerConfig.findOneAndUpdate(
+      { resellerId },
+      { $set: { passwordHash } },
+      { new: true }
+    )
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reseller not found.',
+      })
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Password reset successfully for reseller ${updated.name || resellerId}.`,
     })
   } catch (error) {
     next(error)

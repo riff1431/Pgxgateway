@@ -5,6 +5,7 @@ export interface JWTPayload {
   id: string
   email: string
   role?: 'merchant' | 'admin' | 'super_admin'
+  resellerId?: string
 }
 
 export function signToken(payload: JWTPayload): string {

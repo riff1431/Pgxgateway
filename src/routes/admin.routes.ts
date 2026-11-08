@@ -16,13 +16,17 @@ import {
   getAdminTransactions,
   getSuperAdminAnalytics,
   markMerchantPayout,
+  createResellerTenant,
+  getSuperAdminResellersList,
+  updateResellerStatus,
+  resetResellerPassword,
 } from '../controllers/admin.controller.js'
-import { adminProtect } from '../middleware/admin.middleware.js'
+import { adminProtect, superAdminOnly } from '../middleware/admin.middleware.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
 
 const router = Router()
 
-// Public admin login
+// Public admin login (Super Admin, Root Admin, and Resellers)
 router.post('/login', adminLogin)
 
 // Public system branding query (so frontend can read logo/title even when unauthenticated)
@@ -40,8 +44,14 @@ router.patch('/applications/:id/review', reviewApplication)
 router.get('/stripe-config', getResellerStripeConfig)
 router.patch('/stripe-config', updateResellerStripeConfig)
 router.get('/transactions', getAdminTransactions)
-router.get('/super-analytics', getSuperAdminAnalytics)
+router.get('/super-analytics', superAdminOnly, getSuperAdminAnalytics)
 router.post('/merchants/:merchantId/payout', markMerchantPayout)
+
+// Super Admin Multi-Tenant Reseller Provisioning & Management
+router.get('/super-resellers', superAdminOnly, getSuperAdminResellersList)
+router.post('/super-resellers', superAdminOnly, createResellerTenant)
+router.patch('/super-resellers/:resellerId/status', superAdminOnly, updateResellerStatus)
+router.post('/super-resellers/:resellerId/reset-password', superAdminOnly, resetResellerPassword)
 
 // White-Label & System Branding Configuration
 router.get('/config', getSystemConfig)

@@ -2,6 +2,10 @@ import mongoose, { Document, Schema } from 'mongoose'
 
 export interface IResellerConfig extends Document {
   resellerId: string
+  name?: string
+  email?: string
+  passwordHash?: string
+  status: 'active' | 'suspended'
   stripe: {
     publishableKey: string
     secretKey: string
@@ -18,6 +22,7 @@ export interface IResellerConfig extends Document {
   totalPlatformFeesEarned: number
   totalResellerProfit: number
   payoutTerms?: string
+  createdBy?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -29,6 +34,28 @@ const ResellerConfigSchema = new Schema<IResellerConfig>(
       required: true,
       unique: true,
       default: 'admin_root',
+      index: true,
+    },
+    name: {
+      type: String,
+      trim: true,
+      default: 'Primary Root Gateway',
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      index: true,
+      sparse: true,
+    },
+    passwordHash: {
+      type: String,
+      select: false, // Hidden from queries by default for security
+    },
+    status: {
+      type: String,
+      enum: ['active', 'suspended'],
+      default: 'active',
       index: true,
     },
     stripe: {
@@ -47,6 +74,7 @@ const ResellerConfigSchema = new Schema<IResellerConfig>(
     totalPlatformFeesEarned: { type: Number, default: 0 },
     totalResellerProfit: { type: Number, default: 0 },
     payoutTerms: { type: String, default: 'Weekly Wire / Crypto Transfer' },
+    createdBy: { type: String, default: 'super_admin' },
   },
   {
     timestamps: true,
