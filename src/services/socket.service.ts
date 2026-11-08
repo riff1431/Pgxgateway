@@ -147,6 +147,13 @@ export function emitToAdmins<T = unknown>(event: string, data: T): void {
   io.to('admin:desk').emit(event, data)
 }
 
+// Real-time helper: Emit event to a specific reseller's room (and admin desk)
+export function emitToReseller<T = unknown>(resellerId: string, event: string, data: T): void {
+  if (!io) return
+  io.to(`reseller:${resellerId}`).emit(event, data)
+  io.to('admin:desk').emit(event, data)
+}
+
 // Real-time helper: Broadcast event to all connected clients
 export function broadcast<T = unknown>(event: string, data: T): void {
   if (!io) return
@@ -162,4 +169,7 @@ export const WS_EVENTS = {
   MESSAGE_READ: 'message:read',
   MESSAGE_LABELS_UPDATED: 'message:labels',
   TRANSACTION_STATUS: 'transaction:status',
+  TRANSACTION_NEW: 'transaction:new',
+  PLATFORM_TRANSACTION_NEW: 'transaction:platform_new',
+  MERCHANT_CREDIT: 'transaction:credit',
 } as const

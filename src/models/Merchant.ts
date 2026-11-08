@@ -1,5 +1,6 @@
 import mongoose, { Document, Schema } from 'mongoose'
 import bcrypt from 'bcryptjs'
+import crypto from 'crypto'
 
 export interface IMerchant extends Document {
   // Account Information (Step 1)
@@ -45,7 +46,17 @@ export interface IMerchant extends Document {
   }
   agreedToTerms: boolean
 
-  // Status & Workflow
+  // Status, Hierarchy & Workflow
+  refId?: string
+  resellerId?: string
+  role?: 'sub_merchant' | 'reseller' | 'super_admin'
+  apiKey?: string
+  balance?: {
+    grossVolume: number
+    netBalance: number
+    totalFeesPaid: number
+    pendingPayout: number
+  }
   avatarUrl?: string
   currentStep: number
   applicationStatus: 'draft' | 'under_review' | 'approved' | 'rejected'
@@ -112,6 +123,37 @@ const MerchantSchema = new Schema<IMerchant>(
     },
     agreedToTerms: { type: Boolean, default: false },
 
+    // Multi-tenant & Routing
+    refId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+    resellerId: {
+      type: String,
+      default: 'admin_root',
+      index: true,
+    },
+    role: {
+      type: String,
+      enum: ['sub_merchant', 'reseller', 'super_admin'],
+      default: 'sub_merchant',
+    },
+    apiKey: {
+      type: String,
+      sparse: true,
+      select: false,
+    },
+    balance: {
+      grossVolume: { type: Number, default: 0 },
+      netBalance: { type: Number, default: 0 },
+      totalFeesPaid: { type: Number, default: 0 },
+      pendingPayout: { type: Number, default: 0 },
+    },
+
     // Workflow
     avatarUrl: { type: String, default: '' },
     currentStep: { type: Number, default: 1, min: 1, max: 3 },
@@ -137,8 +179,20 @@ const MerchantSchema = new Schema<IMerchant>(
   }
 )
 
-// Pre-save hook: Hash password before saving if modified
+// Pre-save hook: Hash password and auto-generate unique refId and apiKey
 MerchantSchema.pre('save', async function (next) {
+  // Generate Ref ID if absent
+  if (!this.refId) {
+    const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase()
+    this.refId = `PGX_REF_${randomHex}`
+  }
+
+  // Generate API key if absent
+  if (!this.apiKey) {
+    this.apiKey = `pgx_live_${crypto.randomBytes(16).toString('hex')}`
+  }
+
+  // Hash password if modified
   if (!this.isModified('password') || !this.password) {
     return next()
   }

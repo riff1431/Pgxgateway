@@ -4,6 +4,8 @@ import { signToken } from '../utils/jwt.js'
 import { Merchant } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
 import { SystemConfig } from '../models/SystemConfig.js'
+import { ResellerConfig } from '../models/ResellerConfig.js'
+import { Transaction } from '../models/Transaction.js'
 import { emitToMerchant, emitToAdmins, WS_EVENTS } from '../services/socket.service.js'
 import { uploadBufferToCloudinary } from '../config/cloudinary.js'
 
@@ -450,6 +452,263 @@ export async function uploadBrandingAsset(req: Request, res: Response, next: Nex
         bytes: cloudRes.bytes,
         name: file.originalname,
       },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+
+// ----------------------------------------------------------------------
+// Multi-Tenant Reseller & Single-Stripe Routing Controller Methods
+// ----------------------------------------------------------------------
+
+// Get Reseller's Stripe Configuration & Merchant Fee Settings
+export async function getResellerStripeConfig(req: Request, res: Response, next: NextFunction) {
+  try {
+    const resellerId = (req.query.resellerId as string) || 'admin_root'
+
+    let configDoc = await ResellerConfig.findOne({ resellerId })
+    if (!configDoc) {
+      configDoc = await ResellerConfig.create({
+        resellerId,
+        stripe: {
+          publishableKey: '',
+          secretKey: '',
+          webhookSecret: '',
+          isConfigured: false,
+          mode: 'test',
+        },
+        feeSettings: {
+          basePlatformFee: 9.0, // Hardwired 9%
+          merchantFeeRate: 12.0,
+        },
+      })
+    }
+
+    // Mask secret keys for security in UI responses
+    const maskedSecret = configDoc.stripe?.secretKey
+      ? `••••••••••••${configDoc.stripe.secretKey.slice(-4)}`
+      : ''
+    const maskedWebhook = configDoc.stripe?.webhookSecret
+      ? `••••••••••••${configDoc.stripe.webhookSecret.slice(-4)}`
+      : ''
+
+    res.status(200).json({
+      success: true,
+      data: {
+        resellerId: configDoc.resellerId,
+        stripe: {
+          publishableKey: configDoc.stripe?.publishableKey || '',
+          secretKeyMasked: maskedSecret,
+          hasSecretKey: Boolean(configDoc.stripe?.secretKey),
+          webhookSecretMasked: maskedWebhook,
+          hasWebhookSecret: Boolean(configDoc.stripe?.webhookSecret),
+          isConfigured: configDoc.stripe?.isConfigured || false,
+          mode: configDoc.stripe?.mode || 'test',
+        },
+        feeSettings: {
+          basePlatformFee: 9.0, // Hardwired
+          merchantFeeRate: configDoc.feeSettings?.merchantFeeRate || 12.0,
+        },
+        totalVolumeProcessed: configDoc.totalVolumeProcessed || 0,
+        totalPlatformFeesEarned: configDoc.totalPlatformFeesEarned || 0,
+        totalResellerProfit: configDoc.totalResellerProfit || 0,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Update Reseller's Stripe Configuration & Fee Settings
+export async function updateResellerStripeConfig(req: Request, res: Response, next: NextFunction) {
+  try {
+    const resellerId = (req.body.resellerId as string) || 'admin_root'
+    const { publishableKey, secretKey, webhookSecret, mode, merchantFeeRate } = req.body
+
+    let configDoc = await ResellerConfig.findOne({ resellerId })
+    if (!configDoc) {
+      configDoc = new ResellerConfig({ resellerId })
+    }
+
+    if (publishableKey !== undefined) {
+      configDoc.stripe.publishableKey = publishableKey.trim()
+    }
+
+    // Only overwrite secret key if user actually typed a new one (not masked)
+    if (secretKey && !secretKey.includes('••••')) {
+      configDoc.stripe.secretKey = secretKey.trim()
+    }
+
+    if (webhookSecret && !webhookSecret.includes('••••')) {
+      configDoc.stripe.webhookSecret = webhookSecret.trim()
+    }
+
+    if (mode && ['test', 'live'].includes(mode)) {
+      configDoc.stripe.mode = mode
+    }
+
+    // Enforce Hardwired 9.0% Platform Fee Constraint
+    if (merchantFeeRate !== undefined) {
+      const rateNum = parseFloat(merchantFeeRate)
+      if (isNaN(rateNum) || rateNum < 9.0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Merchant fee rate cannot be set lower than the hardwired 9.0% platform base fee.',
+        })
+      }
+      configDoc.feeSettings.merchantFeeRate = rateNum
+    }
+
+    configDoc.stripe.isConfigured = Boolean(
+      configDoc.stripe.publishableKey && configDoc.stripe.secretKey
+    )
+
+    await configDoc.save()
+
+    res.status(200).json({
+      success: true,
+      message: 'Gateway configuration and fee parameters updated successfully.',
+      data: {
+        isConfigured: configDoc.stripe.isConfigured,
+        mode: configDoc.stripe.mode,
+        merchantFeeRate: configDoc.feeSettings.merchantFeeRate,
+        basePlatformFee: 9.0,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Get All Transactions for Admin & Super Admin Ledger
+export async function getAdminTransactions(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { status, search, refId, page = '1', limit = '25' } = req.query
+
+    const query: Record<string, unknown> = {}
+
+    if (status && status !== 'all') {
+      query.status = status
+    }
+
+    if (refId && typeof refId === 'string') {
+      query.merchantRefId = refId.toUpperCase().trim()
+    }
+
+    if (search && typeof search === 'string') {
+      const regex = new RegExp(search.trim(), 'i')
+      query.$or = [
+        { transactionId: regex },
+        { merchantRefId: regex },
+        { customerEmail: regex },
+        { customerName: regex },
+        { orderId: regex },
+      ]
+    }
+
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 25))
+    const skip = (pageNum - 1) * limitNum
+
+    const [transactions, total] = await Promise.all([
+      Transaction.find(query).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+      Transaction.countDocuments(query),
+    ])
+
+    res.status(200).json({
+      success: true,
+      data: transactions,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Super Admin Global Revenue & Platform Analytics
+export async function getSuperAdminAnalytics(_req: Request, res: Response, next: NextFunction) {
+  try {
+    const [totalMerchants, approvedMerchants, txnAgg] = await Promise.all([
+      Merchant.countDocuments(),
+      Merchant.countDocuments({ applicationStatus: 'approved' }),
+      Transaction.aggregate([
+        { $match: { status: 'succeeded' } },
+        {
+          $group: {
+            _id: null,
+            totalGrossVolume: { $sum: '$grossAmount' },
+            totalPlatformFees: { $sum: '$platformFeeAmount' }, // 9% Platform revenue
+            totalResellerProfit: { $sum: '$resellerProfitAmount' },
+            totalMerchantNet: { $sum: '$merchantNetAmount' },
+            totalTransactions: { $sum: 1 },
+          },
+        },
+      ]),
+    ])
+
+    const agg = txnAgg[0] || {
+      totalGrossVolume: 0,
+      totalPlatformFees: 0,
+      totalResellerProfit: 0,
+      totalMerchantNet: 0,
+      totalTransactions: 0,
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalGrossVolume: Number(agg.totalGrossVolume.toFixed(2)),
+        totalPlatformFees: Number(agg.totalPlatformFees.toFixed(2)), // 9% Platform earnings
+        totalResellerProfit: Number(agg.totalResellerProfit.toFixed(2)),
+        totalMerchantNet: Number(agg.totalMerchantNet.toFixed(2)),
+        totalTransactions: agg.totalTransactions,
+        totalMerchants,
+        approvedMerchants,
+        platformFeeRate: 9.0,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Disburse / Record Manual Payout to a Sub-Merchant
+export async function markMerchantPayout(req: Request, res: Response, next: NextFunction) {
+  try {
+    const merchantId = String(req.params.merchantId)
+    const { amount, reference, notes } = req.body
+
+    const merchant = await Merchant.findById(merchantId)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    const payoutAmount = parseFloat(amount) || merchant.balance?.netBalance || 0
+
+    await Merchant.findByIdAndUpdate(merchantId, {
+      $inc: {
+        'balance.netBalance': -payoutAmount,
+        'balance.pendingPayout': 0,
+      },
+    })
+
+    emitToMerchant(merchantId, WS_EVENTS.NEW_NOTIFICATION, {
+      title: 'Payout Disbursed',
+      message: `A payout of $${payoutAmount.toFixed(2)} has been recorded (${reference || 'Wire/Crypto'}). ${notes || ''}`,
+      type: 'system',
+      priority: 'high',
+    })
+
+    res.status(200).json({
+      success: true,
+      message: `Payout of $${payoutAmount.toFixed(2)} recorded successfully for ${merchant.legalName || merchant.fullName}.`,
     })
   } catch (error) {
     next(error)

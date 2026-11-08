@@ -11,6 +11,11 @@ import {
   getMerchantMessages,
   getAllMessages,
   uploadBrandingAsset,
+  getResellerStripeConfig,
+  updateResellerStripeConfig,
+  getAdminTransactions,
+  getSuperAdminAnalytics,
+  markMerchantPayout,
 } from '../controllers/admin.controller.js'
 import { adminProtect } from '../middleware/admin.middleware.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
@@ -30,6 +35,13 @@ router.get('/stats', getAdminStats)
 router.get('/applications', getApplications)
 router.get('/applications/:id', getApplicationById)
 router.patch('/applications/:id/review', reviewApplication)
+
+// Multi-Tenant Reseller & Stripe Gateway Settings
+router.get('/stripe-config', getResellerStripeConfig)
+router.patch('/stripe-config', updateResellerStripeConfig)
+router.get('/transactions', getAdminTransactions)
+router.get('/super-analytics', getSuperAdminAnalytics)
+router.post('/merchants/:merchantId/payout', markMerchantPayout)
 
 // White-Label & System Branding Configuration
 router.get('/config', getSystemConfig)
