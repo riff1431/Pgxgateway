@@ -24,8 +24,10 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
     const normalizedEmail = email.toLowerCase().trim()
 
     if (
-      normalizedEmail !== config.admin.email.toLowerCase() ||
-      password !== config.admin.password
+      (normalizedEmail !== config.admin.email.toLowerCase() && normalizedEmail !== config.superAdmin.email.toLowerCase()) ||
+      (normalizedEmail === config.superAdmin.email.toLowerCase()
+        ? password !== config.superAdmin.password
+        : password !== config.admin.password)
     ) {
       return res.status(401).json({
         success: false,
@@ -33,19 +35,23 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
       })
     }
 
+    const isSuperAdmin = normalizedEmail === config.superAdmin.email.toLowerCase()
+    const role = isSuperAdmin ? 'super_admin' : 'admin'
+    const adminId = isSuperAdmin ? 'super_admin_root' : 'admin_root'
+
     const token = signToken({
-      id: 'admin_root',
+      id: adminId,
       email: normalizedEmail,
-      role: 'admin',
+      role,
     })
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: 'Admin authenticated successfully.',
+      message: `${isSuperAdmin ? 'Super Administrator' : 'Administrator'} authenticated successfully.`,
       token,
       admin: {
         email: normalizedEmail,
-        role: 'admin',
+        role,
       },
     })
   } catch (error) {
@@ -635,9 +641,10 @@ export async function getAdminTransactions(req: Request, res: Response, next: Ne
 // Super Admin Global Revenue & Platform Analytics
 export async function getSuperAdminAnalytics(_req: Request, res: Response, next: NextFunction) {
   try {
-    const [totalMerchants, approvedMerchants, txnAgg] = await Promise.all([
+    const [totalMerchants, approvedMerchants, resellers, txnAgg] = await Promise.all([
       Merchant.countDocuments(),
       Merchant.countDocuments({ applicationStatus: 'approved' }),
+      ResellerConfig.find().select('resellerId stripe.mode stripe.isConfigured feeSettings totalVolumeProcessed totalPlatformFeesEarned totalResellerProfit updatedAt'),
       Transaction.aggregate([
         { $match: { status: 'succeeded' } },
         {
@@ -672,6 +679,7 @@ export async function getSuperAdminAnalytics(_req: Request, res: Response, next:
         totalMerchants,
         approvedMerchants,
         platformFeeRate: 9.0,
+        resellers,
       },
     })
   } catch (error) {
