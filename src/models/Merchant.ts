@@ -46,6 +46,17 @@ export interface IMerchant extends Document {
   }
   agreedToTerms: boolean
 
+  // Website & Git Integration Setup
+  websiteDomain?: string
+  gitRepoUrl?: string
+  setupStatus?: 'pending_payment' | 'paid_setup' | 'collab_submitted' | 'in_progress' | 'completed'
+  setupFeeAmount?: number
+  setupPaidAt?: Date
+  setupStripeSessionId?: string
+  gitCollabStatus?: 'pending' | 'invite_sent' | 'accepted'
+  envConfig?: string
+  affiliateCommissionEarned?: number
+
   // Status, Hierarchy & Workflow
   refId?: string
   resellerId?: string
@@ -122,6 +133,26 @@ const MerchantSchema = new Schema<IMerchant>(
       uploadedAt: { type: Date, default: Date.now },
     },
     agreedToTerms: { type: Boolean, default: false },
+
+    // Website & Git Integration Setup
+    websiteDomain: { type: String, trim: true },
+    gitRepoUrl: { type: String, trim: true },
+    setupStatus: {
+      type: String,
+      enum: ['pending_payment', 'paid_setup', 'collab_submitted', 'in_progress', 'completed'],
+      default: 'pending_payment',
+      index: true,
+    },
+    setupFeeAmount: { type: Number, default: 0 },
+    setupPaidAt: { type: Date },
+    setupStripeSessionId: { type: String, trim: true },
+    gitCollabStatus: {
+      type: String,
+      enum: ['pending', 'invite_sent', 'accepted'],
+      default: 'pending',
+    },
+    envConfig: { type: String, default: '' },
+    affiliateCommissionEarned: { type: Number, default: 0 },
 
     // Multi-tenant & Routing
     refId: {

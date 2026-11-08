@@ -32,6 +32,7 @@ export interface CreateSessionParams {
   customerEmail?: string
   successUrl: string
   cancelUrl: string
+  metadata?: Record<string, string>
 }
 
 export async function createStripeCheckoutSession(params: CreateSessionParams): Promise<Stripe.Checkout.Session> {
@@ -63,12 +64,14 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
       merchant_ref_id: params.merchantRefId,
       reseller_id: params.resellerId,
       order_id: params.orderId || '',
+      ...(params.metadata || {}),
     },
     payment_intent_data: {
       metadata: {
         merchant_ref_id: params.merchantRefId,
         reseller_id: params.resellerId,
         order_id: params.orderId || '',
+        ...(params.metadata || {}),
       },
     },
     success_url: params.successUrl,

@@ -8,6 +8,16 @@ export interface ISystemConfig extends Document {
   supportPhone?: string
   supportTelegram?: string
   supportWhatsapp?: string
+  stripe?: {
+    publishableKey: string
+    secretKey: string
+    webhookSecret: string
+    isConfigured: boolean
+    mode: 'test' | 'live'
+  }
+  setupFeePriceUSD: number
+  officialGithubHandle: string
+  affiliateCommissionRate: number
   updatedAt: Date
   createdAt: Date
 }
@@ -49,6 +59,29 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       type: String,
       default: '+1 (800) 749-4283',
       trim: true,
+    },
+    stripe: {
+      publishableKey: { type: String, default: '', trim: true },
+      secretKey: { type: String, default: '', trim: true },
+      webhookSecret: { type: String, default: '', trim: true },
+      isConfigured: { type: Boolean, default: false },
+      mode: { type: String, enum: ['test', 'live'], default: 'test' },
+    },
+    setupFeePriceUSD: {
+      type: Number,
+      default: 49.0,
+      min: 0,
+    },
+    officialGithubHandle: {
+      type: String,
+      default: 'huipper-dev',
+      trim: true,
+    },
+    affiliateCommissionRate: {
+      type: Number,
+      default: 20.0, // 20% commission to referring reseller
+      min: 0,
+      max: 100,
     },
   },
   {

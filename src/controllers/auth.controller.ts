@@ -6,7 +6,17 @@ import { AuthRequest } from '../middleware/auth.middleware.js'
 
 export async function register(req: Request, res: Response, next: NextFunction) {
   try {
-    const { fullName, businessEmail, phone, whatsapp, telegram, password, resellerId } = req.body
+    const {
+      fullName,
+      businessEmail,
+      phone,
+      whatsapp,
+      telegram,
+      password,
+      resellerId,
+      websiteDomain,
+      gitRepoUrl,
+    } = req.body
 
     if (!fullName || !businessEmail || !phone || !password) {
       return res.status(400).json({
@@ -47,6 +57,10 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       telegram: telegram?.trim(),
       password,
       resellerId: assignedResellerId,
+      websiteDomain: websiteDomain?.trim() || '',
+      website: websiteDomain?.trim() || '',
+      gitRepoUrl: gitRepoUrl?.trim() || '',
+      setupStatus: 'pending_payment',
       currentStep: 1,
       applicationStatus: 'draft',
       offer: {

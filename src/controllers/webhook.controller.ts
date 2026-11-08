@@ -2,8 +2,10 @@ import { Request, Response } from 'express'
 import crypto from 'crypto'
 import type Stripe from 'stripe'
 import { ResellerConfig } from '../models/ResellerConfig.js'
+import { SystemConfig } from '../models/SystemConfig.js'
 import { Merchant } from '../models/Merchant.js'
 import { Transaction } from '../models/Transaction.js'
+import { Notification } from '../models/Notification.js'
 import { constructWebhookEvent } from '../services/stripe.service.js'
 import { emitToAdmins, emitToMerchant, emitToReseller, WS_EVENTS } from '../services/socket.service.js'
 
@@ -16,14 +18,23 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
     return
   }
 
-  // 1. Fetch Reseller Webhook Secret
-  let resellerConfig = await ResellerConfig.findOne({ resellerId })
-  if (!resellerConfig || !resellerConfig.stripe?.webhookSecret) {
-    resellerConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
+  // 1. Fetch Webhook Secret (Reseller or Super Admin SystemConfig)
+  let webhookSecret = ''
+  let resellerConfig: any = null
+  const sysConfig = await SystemConfig.findOne()
+
+  if (resellerId === 'super-admin' || resellerId === 'super_admin' || resellerId === 'platform') {
+    webhookSecret = sysConfig?.stripe?.webhookSecret || ''
+  } else {
+    resellerConfig = await ResellerConfig.findOne({ resellerId })
+    if (!resellerConfig || !resellerConfig.stripe?.webhookSecret) {
+      resellerConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
+    }
+    webhookSecret = resellerConfig?.stripe?.webhookSecret || sysConfig?.stripe?.webhookSecret || ''
   }
 
-  if (!resellerConfig || !resellerConfig.stripe?.webhookSecret) {
-    console.warn(`[Stripe Webhook] Webhook secret not configured for reseller: ${resellerId}`)
+  if (!webhookSecret) {
+    console.warn(`[Stripe Webhook] Webhook secret not configured for target: ${resellerId}`)
     res.status(400).json({ error: 'Stripe webhook secret is not configured.' })
     return
   }
@@ -31,7 +42,7 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
   let event: Stripe.Event
   try {
     const rawBody = (req as any).rawBody || req.body
-    event = constructWebhookEvent(rawBody, signature, resellerConfig.stripe.webhookSecret)
+    event = constructWebhookEvent(rawBody, signature, webhookSecret)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown signature failure'
     console.error(`[Stripe Webhook] Signature verification failed: ${message}`)
@@ -50,13 +61,96 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
   // 3. Process Payment Completion Events
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session
-    await processSuccessfulCheckout(session, event.id, resellerConfig)
+    if (session.metadata?.type === 'setup_fee') {
+      await processSetupFeeCheckout(session, event.id)
+    } else {
+      await processSuccessfulCheckout(session, event.id, resellerConfig)
+    }
   } else if (event.type === 'payment_intent.succeeded') {
     const paymentIntent = event.data.object as Stripe.PaymentIntent
     console.log(`[Stripe Webhook] PaymentIntent succeeded: ${paymentIntent.id}`)
   }
 
   res.status(200).json({ received: true })
+}
+
+async function processSetupFeeCheckout(session: Stripe.Checkout.Session, eventId: string) {
+  const metadata = session.metadata || {}
+  const merchantId = metadata.merchantId
+  if (!merchantId) {
+    console.warn(`[Stripe Webhook] Setup fee checkout completed without merchantId in metadata: ${session.id}`)
+    return
+  }
+
+  const merchant = await Merchant.findById(merchantId)
+  if (!merchant) {
+    console.warn(`[Stripe Webhook] Merchant with ID ${merchantId} not found in database for setup fee.`)
+    return
+  }
+
+  const amountTotal = (session.amount_total || 0) / 100
+  merchant.setupStatus = 'paid_setup'
+  merchant.setupFeeAmount = amountTotal
+  merchant.setupPaidAt = new Date()
+  merchant.setupStripeSessionId = session.id
+
+  // Credit affiliate commission to referring reseller (if any)
+  if (merchant.resellerId && merchant.resellerId !== 'admin_root') {
+    const sysConfig = await SystemConfig.findOne()
+    const rate = sysConfig?.affiliateCommissionRate ?? 20.0
+    const commission = Math.round(((amountTotal * rate) / 100) * 100) / 100
+    merchant.affiliateCommissionEarned = commission
+
+    await ResellerConfig.findOneAndUpdate(
+      { resellerId: merchant.resellerId },
+      { $inc: { prepaidBalance: commission, totalResellerProfit: commission } }
+    )
+    console.log(`[Stripe Webhook] Credited $${commission} affiliate commission to reseller ${merchant.resellerId}`)
+  }
+
+  await merchant.save()
+
+  // Save Transaction log for setup fee
+  const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
+  await Transaction.create({
+    transactionId: `TXN_SETUP_${Date.now().toString().slice(-4)}_${txnIdSuffix}`,
+    resellerId: merchant.resellerId || 'admin_root',
+    merchantId: merchant._id,
+    merchantRefId: merchant.refId || String(merchant._id),
+    stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : undefined,
+    stripeSessionId: session.id,
+    stripeEventId: eventId,
+    currency: (session.currency || 'USD').toUpperCase(),
+    grossAmount: amountTotal,
+    platformFeeAmount: amountTotal, // Platform received setup fee
+    resellerSpreadAmount: merchant.affiliateCommissionEarned || 0,
+    merchantNetAmount: 0,
+    status: 'succeeded',
+    customerEmail: session.customer_email || merchant.businessEmail,
+    orderId: metadata.order_id || `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
+  })
+
+  // Notifications
+  await Notification.create({
+    merchantId: merchant._id,
+    title: 'Setup Payment Verified!',
+    content: `We received your setup payment of $${amountTotal}. The GitHub collaboration and configuration desk is now unlocked.`,
+    type: 'system',
+  })
+
+  emitToMerchant(String(merchant._id), 'setup_paid', {
+    setupStatus: 'paid_setup',
+    setupFeeAmount: amountTotal,
+  })
+
+  emitToAdmins(WS_EVENTS.PAYMENT_RECEIVED, {
+    merchantId: merchant._id,
+    fullName: merchant.fullName,
+    amount: amountTotal,
+    type: 'setup_fee',
+  })
+
+  console.log(`[Stripe Webhook] Setup fee of $${amountTotal} successfully processed for merchant ${merchant.fullName} (${merchant._id}).`)
 }
 
 async function processSuccessfulCheckout(

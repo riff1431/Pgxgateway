@@ -172,4 +172,8 @@ export const WS_EVENTS = {
   TRANSACTION_NEW: 'transaction:new',
   PLATFORM_TRANSACTION_NEW: 'transaction:platform_new',
   MERCHANT_CREDIT: 'transaction:credit',
+  SETUP_STATUS_UPDATED: 'setup:updated',
+  SETUP_MESSAGE: 'setup:message',
+  PAYMENT_RECEIVED: 'payment:received',
+  DOCUMENT_UPLOADED: 'document:uploaded',
 } as const

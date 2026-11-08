@@ -4,6 +4,7 @@ import { Merchant, IMerchant } from '../models/Merchant.js'
 
 export interface AuthRequest extends Request {
   user?: IMerchant
+  merchant?: IMerchant
 }
 
 export async function protect(req: AuthRequest, res: Response, next: NextFunction) {
@@ -35,6 +36,7 @@ export async function protect(req: AuthRequest, res: Response, next: NextFunctio
 
     // Grant access & attach to request
     req.user = currentMerchant
+    req.merchant = currentMerchant
     next()
   } catch (error) {
     return res.status(401).json({
