@@ -6,7 +6,7 @@ import { AuthRequest } from '../middleware/auth.middleware.js'
 
 export async function register(req: Request, res: Response, next: NextFunction) {
   try {
-    const { fullName, businessEmail, phone, whatsapp, telegram, password } = req.body
+    const { fullName, businessEmail, phone, whatsapp, telegram, password, resellerId } = req.body
 
     if (!fullName || !businessEmail || !phone || !password) {
       return res.status(400).json({
@@ -33,6 +33,11 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       })
     }
 
+    const assignedResellerId =
+      resellerId && typeof resellerId === 'string' && resellerId.trim()
+        ? resellerId.trim()
+        : 'admin_root'
+
     // Create merchant record (Step 1 complete)
     const merchant = await Merchant.create({
       fullName: fullName.trim(),
@@ -41,6 +46,7 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       whatsapp: whatsapp?.trim(),
       telegram: telegram?.trim(),
       password,
+      resellerId: assignedResellerId,
       currentStep: 1,
       applicationStatus: 'draft',
       offer: {

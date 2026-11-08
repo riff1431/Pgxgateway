@@ -20,6 +20,7 @@ import {
   getSuperAdminResellersList,
   updateResellerStatus,
   resetResellerPassword,
+  reassignMerchantReseller,
 } from '../controllers/admin.controller.js'
 import { adminProtect, superAdminOnly } from '../middleware/admin.middleware.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
@@ -52,11 +53,12 @@ router.get('/super-resellers', superAdminOnly, getSuperAdminResellersList)
 router.post('/super-resellers', superAdminOnly, createResellerTenant)
 router.patch('/super-resellers/:resellerId/status', superAdminOnly, updateResellerStatus)
 router.post('/super-resellers/:resellerId/reset-password', superAdminOnly, resetResellerPassword)
+router.patch('/super-merchants/:merchantId/reassign', superAdminOnly, reassignMerchantReseller)
 
-// White-Label & System Branding Configuration
+// White-Label & System Branding Configuration (Exclusively Super Admin)
 router.get('/config', getSystemConfig)
-router.patch('/config', updateSystemConfig)
-router.post('/upload-branding', uploadImage.single('file'), uploadBrandingAsset)
+router.patch('/config', superAdminOnly, updateSystemConfig)
+router.post('/upload-branding', superAdminOnly, uploadImage.single('file'), uploadBrandingAsset)
 
 // Two-Way Direct Messaging with Merchants
 router.post('/merchants/:id/message', sendMessageToMerchant)

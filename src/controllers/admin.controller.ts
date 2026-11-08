@@ -1031,3 +1031,58 @@ export async function resetResellerPassword(req: AdminRequest, res: Response, ne
     next(error)
   }
 }
+
+
+// Reassign Sub-Merchant to another Reseller Tenant (Super Admin Only)
+export async function reassignMerchantReseller(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { merchantId } = req.params
+    const { targetResellerId } = req.body
+
+    if (!targetResellerId || typeof targetResellerId !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid targetResellerId.',
+      })
+    }
+
+    const cleanResellerId = targetResellerId.trim()
+
+    // Verify reseller exists unless it is 'admin_root'
+    if (cleanResellerId !== 'admin_root') {
+      const resellerExists = await ResellerConfig.findOne({ resellerId: cleanResellerId })
+      if (!resellerExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Target reseller tenant not found in the system.',
+        })
+      }
+    }
+
+    const updatedMerchant = await Merchant.findByIdAndUpdate(
+      merchantId,
+      { $set: { resellerId: cleanResellerId } },
+      { new: true }
+    )
+
+    if (!updatedMerchant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Merchant not found.',
+      })
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Merchant ${updatedMerchant.fullName} successfully reassigned to tenant ${cleanResellerId}.`,
+      data: {
+        merchantId: updatedMerchant._id,
+        fullName: updatedMerchant.fullName,
+        businessEmail: updatedMerchant.businessEmail,
+        resellerId: updatedMerchant.resellerId,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
