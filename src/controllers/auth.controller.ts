@@ -32,7 +32,7 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       })
     }
 
-    const normalizedEmail = businessEmail.toLowerCase().trim()
+    const normalizedEmail = businessEmail.toLowerCase().trim();
 
     // Check if email already registered
     const existingMerchant = await Merchant.findOne({ businessEmail: normalizedEmail })
@@ -117,16 +117,17 @@ export async function register(req: Request, res: Response, next: NextFunction) 
 
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
-    const { businessEmail, password } = req.body
+    const rawEmail = req.body.businessEmail || req.body.email;
+    const { password } = req.body;
 
-    if (!businessEmail || !password) {
+    if (!rawEmail || !password) {
       return res.status(400).json({
         success: false,
         message: 'Please provide business email and password.',
       })
     }
 
-    const normalizedEmail = businessEmail.toLowerCase().trim()
+    const normalizedEmail = String(rawEmail).toLowerCase().trim();
 
     // Find merchant including the password field
     const merchant = await Merchant.findOne({ businessEmail: normalizedEmail }).select('+password')
