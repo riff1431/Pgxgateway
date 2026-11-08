@@ -46,16 +46,38 @@ export interface IMerchant extends Document {
   }
   agreedToTerms: boolean
 
-  // Website & Git Integration Setup
+  // Website & Git Integration Setup (PRD Section 05 & 06)
   websiteDomain?: string
   gitRepoUrl?: string
-  setupStatus?: 'pending_payment' | 'paid_setup' | 'collab_submitted' | 'in_progress' | 'completed'
+  setupStatus?:
+    | 'payment_pending'
+    | 'information_pending'
+    | 'under_review'
+    | 'in_development'
+    | 'integration_testing'
+    | 'completed'
+    | 'delivered'
+    | 'pending_payment'
+    | 'paid_setup'
+    | 'collab_submitted'
+    | 'in_progress'
   setupFeeAmount?: number
   setupPaidAt?: Date
   setupStripeSessionId?: string
   gitCollabStatus?: 'pending' | 'invite_sent' | 'accepted'
   envConfig?: string
   affiliateCommissionEarned?: number
+
+  // PRD Onboarding Metadata (PRD Section 05)
+  hostingProvider?: string
+  techStack?: string
+  companyDescription?: string
+  brandLogoUrl?: string
+  primaryColor?: string
+  secondaryColor?: string
+  preferredDomain?: string
+  altDomain?: string
+  integrationNotes?: string
 
   // Status, Hierarchy & Workflow
   refId?: string
@@ -139,8 +161,20 @@ const MerchantSchema = new Schema<IMerchant>(
     gitRepoUrl: { type: String, trim: true },
     setupStatus: {
       type: String,
-      enum: ['pending_payment', 'paid_setup', 'collab_submitted', 'in_progress', 'completed'],
-      default: 'pending_payment',
+      enum: [
+        'payment_pending',
+        'information_pending',
+        'under_review',
+        'in_development',
+        'integration_testing',
+        'completed',
+        'delivered',
+        'pending_payment',
+        'paid_setup',
+        'collab_submitted',
+        'in_progress',
+      ],
+      default: 'payment_pending',
       index: true,
     },
     setupFeeAmount: { type: Number, default: 0 },
@@ -153,6 +187,17 @@ const MerchantSchema = new Schema<IMerchant>(
     },
     envConfig: { type: String, default: '' },
     affiliateCommissionEarned: { type: Number, default: 0 },
+
+    // PRD Section 05 Onboarding Metadata
+    hostingProvider: { type: String, trim: true, default: '' },
+    techStack: { type: String, trim: true, default: '' },
+    companyDescription: { type: String, trim: true, default: '' },
+    brandLogoUrl: { type: String, trim: true, default: '' },
+    primaryColor: { type: String, trim: true, default: '#D946EF' },
+    secondaryColor: { type: String, trim: true, default: '#00F0FF' },
+    preferredDomain: { type: String, trim: true, default: '' },
+    altDomain: { type: String, trim: true, default: '' },
+    integrationNotes: { type: String, trim: true, default: '' },
 
     // Multi-tenant & Routing
     refId: {

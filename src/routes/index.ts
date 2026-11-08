@@ -7,6 +7,7 @@ import adminRoutes from './admin.routes.js'
 import checkoutRoutes from './checkout.routes.js'
 import webhookRoutes from './webhook.routes.js'
 import setupRoutes from './setup.routes.js'
+import invoiceRoutes from './invoice.routes.js'
 
 const apiRouter = Router()
 
@@ -20,5 +21,6 @@ apiRouter.use('/dashboard', dashboardRoutes)
 apiRouter.use('/admin', adminRoutes)
 apiRouter.use('/checkout', checkoutRoutes)
 apiRouter.use('/setup', setupRoutes)
+apiRouter.use('/invoices', invoiceRoutes)
 
 export default apiRouter

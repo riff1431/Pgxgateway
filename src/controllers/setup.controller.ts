@@ -14,7 +14,8 @@ async function getOrCreateSystemConfig(): Promise<ISystemConfig> {
   if (!config) {
     config = await SystemConfig.create({
       siteName: 'PGX Gateway',
-      setupFeePriceUSD: 49.0,
+      setupFeePriceUSD: 450.0,
+      setupFeePresetAltUSD: 565.0,
       officialGithubHandle: 'huipper-dev',
       affiliateCommissionRate: 20.0,
       stripe: {
@@ -50,7 +51,8 @@ export async function getPlatformSettings(req: AdminRequest, res: Response, next
         supportPhone: config.supportPhone,
         supportTelegram: config.supportTelegram,
         supportWhatsapp: config.supportWhatsapp,
-        setupFeePriceUSD: config.setupFeePriceUSD ?? 49.0,
+        setupFeePriceUSD: config.setupFeePriceUSD ?? 450.0,
+        setupFeePresetAltUSD: config.setupFeePresetAltUSD ?? 565.0,
         officialGithubHandle: config.officialGithubHandle || 'huipper-dev',
         affiliateCommissionRate: config.affiliateCommissionRate ?? 20.0,
         stripe: {
@@ -86,6 +88,7 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
 
     if (siteName !== undefined) config.siteName = siteName.trim()
     if (setupFeePriceUSD !== undefined) config.setupFeePriceUSD = Math.max(0, Number(setupFeePriceUSD))
+    if (req.body.setupFeePresetAltUSD !== undefined) config.setupFeePresetAltUSD = Math.max(0, Number(req.body.setupFeePresetAltUSD))
     if (officialGithubHandle !== undefined) config.officialGithubHandle = officialGithubHandle.trim().replace(/^@/, '')
     if (affiliateCommissionRate !== undefined) config.affiliateCommissionRate = Math.min(100, Math.max(0, Number(affiliateCommissionRate)))
     if (supportEmail !== undefined) config.supportEmail = supportEmail.trim()
@@ -132,6 +135,7 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
       settings: {
         siteName: config.siteName,
         setupFeePriceUSD: config.setupFeePriceUSD,
+        setupFeePresetAltUSD: config.setupFeePresetAltUSD,
         officialGithubHandle: config.officialGithubHandle,
         affiliateCommissionRate: config.affiliateCommissionRate,
         stripe: {
@@ -173,9 +177,19 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
         gitCollabStatus: merchant.gitCollabStatus || 'pending',
         envConfig: merchant.envConfig || '',
         officialGithubHandle: config.officialGithubHandle || 'huipper-dev',
-        setupFeePriceUSD: config.setupFeePriceUSD || 49.0,
+        setupFeePriceUSD: config.setupFeePriceUSD || 450.0,
+        setupFeePresetAltUSD: config.setupFeePresetAltUSD || 565.0,
         resellerId: merchant.resellerId || 'admin_root',
         isStripeReady: Boolean(config.stripe?.isConfigured && config.stripe?.secretKey),
+        hostingProvider: merchant.hostingProvider || '',
+        techStack: merchant.techStack || '',
+        companyDescription: merchant.companyDescription || '',
+        brandLogoUrl: merchant.brandLogoUrl || '',
+        primaryColor: merchant.primaryColor || '#D946EF',
+        secondaryColor: merchant.secondaryColor || '#00F0FF',
+        preferredDomain: merchant.preferredDomain || '',
+        altDomain: merchant.altDomain || '',
+        integrationNotes: merchant.integrationNotes || '',
       },
     })
   } catch (error) {
@@ -207,7 +221,7 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
     const successUrl = `${appOrigin}/dashboard?setup_payment=success&session_id={CHECKOUT_SESSION_ID}`
     const cancelUrl = `${appOrigin}/dashboard?setup_payment=cancelled`
 
-    const feeAmount = config.setupFeePriceUSD || 49.0
+    const feeAmount = config.setupFeePriceUSD || 450.0
 
     const session = await createStripeCheckoutSession({
       secretKey: config.stripe.secretKey,
@@ -252,19 +266,47 @@ export async function submitCollabDetails(req: AuthRequest, res: Response, next:
       return res.status(401).json({ success: false, message: 'Authentication required' })
     }
 
-    const { websiteDomain, gitRepoUrl, envConfig, inviteSent } = req.body
+    const {
+      websiteDomain,
+      gitRepoUrl,
+      envConfig,
+      inviteSent,
+      hostingProvider,
+      techStack,
+      companyDescription,
+      brandLogoUrl,
+      primaryColor,
+      secondaryColor,
+      preferredDomain,
+      altDomain,
+      integrationNotes,
+    } = req.body
 
     if (websiteDomain) merchant.websiteDomain = websiteDomain.trim()
     if (gitRepoUrl) merchant.gitRepoUrl = gitRepoUrl.trim()
     if (envConfig !== undefined) merchant.envConfig = envConfig.trim()
+    if (hostingProvider !== undefined) merchant.hostingProvider = hostingProvider.trim()
+    if (techStack !== undefined) merchant.techStack = techStack.trim()
+    if (companyDescription !== undefined) merchant.companyDescription = companyDescription.trim()
+    if (brandLogoUrl !== undefined) merchant.brandLogoUrl = brandLogoUrl.trim()
+    if (primaryColor !== undefined) merchant.primaryColor = primaryColor.trim()
+    if (secondaryColor !== undefined) merchant.secondaryColor = secondaryColor.trim()
+    if (preferredDomain !== undefined) merchant.preferredDomain = preferredDomain.trim()
+    if (altDomain !== undefined) merchant.altDomain = altDomain.trim()
+    if (integrationNotes !== undefined) merchant.integrationNotes = integrationNotes.trim()
 
     if (inviteSent) {
       merchant.gitCollabStatus = 'invite_sent'
     }
 
-    // Advance status to collab_submitted if not already in_progress or completed
-    if (merchant.setupStatus === 'paid_setup' || merchant.setupStatus === 'pending_payment') {
-      merchant.setupStatus = 'collab_submitted'
+    // Advance status to under_review / collab_submitted per PRD Section 06
+    if (
+      merchant.setupStatus === 'paid_setup' ||
+      merchant.setupStatus === 'pending_payment' ||
+      merchant.setupStatus === 'payment_pending' ||
+      merchant.setupStatus === 'information_pending'
+    ) {
+      merchant.setupStatus = 'under_review'
     }
 
     await merchant.save()
@@ -388,18 +430,20 @@ export async function getAdminIntegrations(req: AdminRequest, res: Response, nex
     }
 
     const merchants = await Merchant.find(filter)
-      .select('fullName businessEmail phone website websiteDomain gitRepoUrl setupStatus setupFeeAmount setupPaidAt gitCollabStatus envConfig resellerId createdAt')
+      .select('fullName businessEmail phone website websiteDomain gitRepoUrl setupStatus setupFeeAmount setupPaidAt gitCollabStatus envConfig resellerId hostingProvider techStack companyDescription preferredDomain altDomain integrationNotes createdAt')
       .sort({ updatedAt: -1 })
       .lean()
 
-    // Count statistics
+    // Count statistics matching PRD Section 06
     const stats = {
       total: merchants.length,
-      pending_payment: merchants.filter((m) => m.setupStatus === 'pending_payment').length,
-      paid_setup: merchants.filter((m) => m.setupStatus === 'paid_setup').length,
-      collab_submitted: merchants.filter((m) => m.setupStatus === 'collab_submitted').length,
-      in_progress: merchants.filter((m) => m.setupStatus === 'in_progress').length,
+      payment_pending: merchants.filter((m) => ['payment_pending', 'pending_payment'].includes(m.setupStatus as string)).length,
+      information_pending: merchants.filter((m) => ['information_pending', 'paid_setup'].includes(m.setupStatus as string)).length,
+      under_review: merchants.filter((m) => ['under_review', 'collab_submitted'].includes(m.setupStatus as string)).length,
+      in_development: merchants.filter((m) => ['in_development', 'in_progress'].includes(m.setupStatus as string)).length,
+      integration_testing: merchants.filter((m) => m.setupStatus === 'integration_testing').length,
       completed: merchants.filter((m) => m.setupStatus === 'completed').length,
+      delivered: merchants.filter((m) => m.setupStatus === 'delivered').length,
     }
 
     return res.status(200).json({

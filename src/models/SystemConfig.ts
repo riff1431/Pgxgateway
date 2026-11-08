@@ -16,6 +16,7 @@ export interface ISystemConfig extends Document {
     mode: 'test' | 'live'
   }
   setupFeePriceUSD: number
+  setupFeePresetAltUSD: number
   officialGithubHandle: string
   affiliateCommissionRate: number
   updatedAt: Date
@@ -69,7 +70,12 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     },
     setupFeePriceUSD: {
       type: Number,
-      default: 49.0,
+      default: 450.0, // PRD v1.0 Section 01 default working example
+      min: 0,
+    },
+    setupFeePresetAltUSD: {
+      type: Number,
+      default: 565.0, // PRD v1.0 Section 01 turnkey VIP tier
       min: 0,
     },
     officialGithubHandle: {
