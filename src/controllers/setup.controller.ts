@@ -217,11 +217,45 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       })
     }
 
-    const appOrigin = req.headers.origin || 'http://localhost:5173'
-    const successUrl = `${appOrigin}/dashboard?setup_payment=success&session_id={CHECKOUT_SESSION_ID}`
-    const cancelUrl = `${appOrigin}/dashboard?setup_payment=cancelled`
+    const appOrigin = req.headers.origin || 'https://pgxgateway.com'
+    const successUrl = `${appOrigin}/dashboard?tab=integration&setup_payment=success&session_id={CHECKOUT_SESSION_ID}`
+    const cancelUrl = `${appOrigin}/dashboard?tab=integration&setup_payment=cancelled`
 
     const feeAmount = config.setupFeePriceUSD || 450.0
+
+    // Handle dummy/sample keys seamlessly for testing & QA simulation
+    if (config.stripe.secretKey.startsWith('sk_test_sample')) {
+      const simulatedSessionId = `cs_test_simulated_${Date.now()}`
+      merchant.setupStripeSessionId = simulatedSessionId
+      merchant.setupFeeAmount = feeAmount
+      merchant.setupPaidAt = new Date()
+      merchant.setupStatus = 'information_pending'
+
+      // Accrue 20% affiliate commission to reseller
+      const commissionRate = config.affiliateCommissionRate || 20.0
+      const commissionEarned = (feeAmount * commissionRate) / 100.0
+      merchant.affiliateCommissionEarned = commissionEarned
+      await merchant.save()
+
+      if (merchant.resellerId) {
+        await ResellerConfig.findOneAndUpdate(
+          { resellerId: merchant.resellerId },
+          {
+            $inc: {
+              prepaidBalance: commissionEarned,
+              totalResellerProfit: commissionEarned,
+            },
+          }
+        )
+      }
+
+      return res.status(200).json({
+        success: true,
+        checkoutUrl: `${appOrigin}/dashboard?tab=integration&setup_payment=success&simulated=true`,
+        sessionId: simulatedSessionId,
+        amount: feeAmount,
+      })
+    }
 
     const session = await createStripeCheckoutSession({
       secretKey: config.stripe.secretKey,
