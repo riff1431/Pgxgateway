@@ -319,14 +319,23 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
   }
 }
 
-// Admin Metrics & Stats
-export async function getAdminStats(_req: Request, res: Response, next: NextFunction) {
+// Admin Metrics & Stats — multi-tenant scoped for resellers
+export async function getAdminStats(req: AdminRequest, res: Response, next: NextFunction) {
   try {
+    const scope: Record<string, unknown> = {}
+
+    // Multi-tenant scoping: Resellers see only their transactions/merchants; Super Admin sees all
+    if (req.admin?.role === 'admin') {
+      scope.resellerId = req.admin.resellerId || 'admin_root'
+    } else if (req.query.resellerId && req.query.resellerId !== 'all') {
+      scope.resellerId = req.query.resellerId
+    }
+
     const [total, pending, approved, rejected] = await Promise.all([
-      Merchant.countDocuments(),
-      Merchant.countDocuments({ applicationStatus: 'under_review' }),
-      Merchant.countDocuments({ applicationStatus: 'approved' }),
-      Merchant.countDocuments({ applicationStatus: 'rejected' }),
+      Merchant.countDocuments(scope),
+      Merchant.countDocuments({ ...scope, applicationStatus: 'under_review' }),
+      Merchant.countDocuments({ ...scope, applicationStatus: 'approved' }),
+      Merchant.countDocuments({ ...scope, applicationStatus: 'rejected' }),
     ])
 
     res.status(200).json({
