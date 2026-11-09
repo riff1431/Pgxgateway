@@ -1,4 +1,4 @@
-import express from 'express'
+import express, { Request } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import morgan from 'morgan'
@@ -54,7 +54,7 @@ export function createApp() {
   app.use(
     express.json({
       limit: '1mb',
-      verify: (req: any, _res, buf) => {
+      verify: (req: Request, _res, buf) => {
         if (req.originalUrl && req.originalUrl.includes('/webhooks')) {
           req.rawBody = buf
         }

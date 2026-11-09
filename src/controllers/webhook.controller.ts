@@ -41,7 +41,7 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
 
   let event: Stripe.Event
   try {
-    const rawBody = (req as any).rawBody || req.body
+    const rawBody = req.rawBody || req.body
     event = constructWebhookEvent(rawBody, signature, webhookSecret)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown signature failure'
