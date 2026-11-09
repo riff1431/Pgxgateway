@@ -50,10 +50,10 @@ export function createApp() {
     app.use(morgan(config.env === 'production' ? 'combined' : 'dev'))
   }
 
-  // Body parsers (with raw body buffer capture for Stripe webhook signature verification)
+  // Body parsers (safe 1MB limit for DoS protection, with raw buffer capture for Stripe webhooks)
   app.use(
     express.json({
-      limit: '15mb',
+      limit: '1mb',
       verify: (req: any, _res, buf) => {
         if (req.originalUrl && req.originalUrl.includes('/webhooks')) {
           req.rawBody = buf
@@ -61,7 +61,7 @@ export function createApp() {
       },
     })
   )
-  app.use(express.urlencoded({ extended: true, limit: '15mb' }))
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }))
 
   // Serve uploaded files statically
   const uploadsPath = path.resolve(process.cwd(), 'uploads')
