@@ -11,6 +11,9 @@ import { notFound } from './middleware/notFound.js'
 export function createApp() {
   const app = express()
 
+  // Trust first proxy for accurate client IP identification (Nginx, Dokploy, Cloudflare)
+  app.set('trust proxy', 1)
+
   // Security headers (configured to allow static asset serving)
   app.use(
     helmet({

@@ -25,11 +25,12 @@ import {
 } from '../controllers/admin.controller.js'
 import { adminProtect, superAdminOnly } from '../middleware/admin.middleware.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
+import { authLimiter } from '../middleware/rateLimiter.js'
 
 const router = Router()
 
-// Public admin login (Super Admin, Root Admin, and Resellers)
-router.post('/login', adminLogin)
+// Public admin login (Super Admin, Root Admin, and Resellers) protected against brute-force
+router.post('/login', authLimiter, adminLogin)
 
 // Public system branding query (so frontend can read logo/title even when unauthenticated)
 router.get('/config/public', getSystemConfig)

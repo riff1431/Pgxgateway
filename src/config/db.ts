@@ -11,7 +11,11 @@ try {
 
 export async function connectDB(): Promise<void> {
   try {
-    const conn = await mongoose.connect(config.mongodbUri)
+    const conn = await mongoose.connect(config.mongodbUri, {
+      maxPoolSize: 20,
+      minPoolSize: 2,
+      serverSelectionTimeoutMS: 5000,
+    })
     console.log(`[MongoDB] Connected to database: ${conn.connection.name} @ ${conn.connection.host}`)
   } catch (error) {
     console.error('[MongoDB] Connection error:', error instanceof Error ? error.message : error)
