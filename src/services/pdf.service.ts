@@ -281,53 +281,54 @@ export async function generateInvoicePdfBuffer(
       // ==========================================
       // 6. TOTALS & SETTLEMENT RECONCILIATION
       // ==========================================
-      const blockY = rowY + 20
+      const blockY = rowY + 18
 
       // Left Column: Settlement & Audit Trail Box
       const auditW = 265
-      const auditH = 120
+      const auditH = 124
       doc.roundedRect(48, blockY, auditW, auditH, 8).fillAndStroke('#F8FAFC', '#CBD5E1')
 
-      doc.fontSize(9).fillColor('#0F172A').font('Helvetica-Bold').text('SETTLEMENT & AUDIT TRAIL', 60, blockY + 13)
+      doc.fontSize(9).fillColor('#0F172A').font('Helvetica-Bold').text('SETTLEMENT & AUDIT TRAIL', 60, blockY + 12)
 
       doc.fontSize(9.5).fillColor('#64748B').font('Helvetica')
-      doc.text('Payment Status:', 60, blockY + 32)
+      doc.text('Payment Status:', 60, blockY + 30)
       doc.fontSize(9.5).fillColor(isPaid ? '#10B981' : '#EF4444').font('Helvetica-Bold').text(
         isPaid ? 'Settled & Reconciled' : 'Pending Settlement',
         160,
-        blockY + 32
+        blockY + 30
       )
 
       doc.fontSize(9.5).fillColor('#64748B').font('Helvetica')
-      doc.text('Settlement Rail:', 60, blockY + 49)
+      doc.text('Settlement Rail:', 60, blockY + 47)
       doc.fontSize(9.5).fillColor('#0F172A').font('Helvetica').text(
         invoice.paymentMethod === 'stripe' ? 'Stripe Card Auto-Debit' : 'Bitcoin (BTC) Desk',
         160,
-        blockY + 49
+        blockY + 47
       )
 
       if (invoice.stripeSessionId) {
         doc.fontSize(9.5).fillColor('#64748B').font('Helvetica')
-        doc.text('Gateway PI Ref:', 60, blockY + 66)
+        doc.text('Gateway PI Ref:', 60, blockY + 64)
         doc.fontSize(9).fillColor('#0F172A').font('Helvetica').text(
           invoice.stripeSessionId.slice(0, 22),
           160,
-          blockY + 66
+          blockY + 64
         )
       }
 
       doc.fontSize(9.5).fillColor('#64748B').font('Helvetica')
-      doc.text('Settlement Date:', 60, blockY + 83)
+      doc.text('Settlement Date:', 60, blockY + 81)
       doc.fontSize(9).fillColor('#0F172A').font('Helvetica').text(
         invoice.paidAt ? new Date(invoice.paidAt).toUTCString().slice(0, 22) : 'Awaiting Payment',
         160,
-        blockY + 83
+        blockY + 81
       )
 
       doc.fontSize(8).fillColor('#94A3B8').font('Helvetica').text(
         'Direct settlement available via Stripe or Bitcoin (BTC) on WhatsApp Desk.',
         60,
-        blockY + 102
+        blockY + 104,
+        { width: auditW - 24 }
       )
 
       // Right Column: Totals Calculation Card
@@ -382,43 +383,44 @@ export async function generateInvoicePdfBuffer(
       )
 
       // ==========================================
-      // 7. ENTERPRISE GUARANTEES & NOTICE STRIP (Clear 9pt fonts)
+      // 7. ENTERPRISE GUARANTEES & NOTICE STRIP (Calculated dynamically below audit box)
       // ==========================================
-      const noticeY = 535
-      doc.roundedRect(48, noticeY, 500, 76, 8).fillAndStroke('#F8FAFC', '#CBD5E1')
+      const noticeY = blockY + auditH + 18
+      const noticeH = 74
+      doc.roundedRect(48, noticeY, 500, noticeH, 8).fillAndStroke('#F8FAFC', '#CBD5E1')
 
       const featColW = 500 / 3
 
       // Col 1
-      doc.fontSize(9.5).fillColor('#0A1128').font('Helvetica-Bold').text('BANK-GRADE SECURITY', 48 + 14, noticeY + 14)
+      doc.fontSize(9.5).fillColor('#0A1128').font('Helvetica-Bold').text('BANK-GRADE SECURITY', 48 + 14, noticeY + 13)
       doc.fontSize(8.5).fillColor('#475569').font('Helvetica').text(
         'Protected by 3DS 2.0 liability shift and 256-bit SSL encryption.',
         48 + 14,
-        noticeY + 30,
+        noticeY + 29,
         { width: featColW - 24, lineGap: 2 }
       )
 
       // Col 2
-      doc.fontSize(9.5).fillColor('#0A1128').font('Helvetica-Bold').text('99.99% UPTIME SLA', 48 + featColW + 10, noticeY + 14)
+      doc.fontSize(9.5).fillColor('#0A1128').font('Helvetica-Bold').text('99.99% UPTIME SLA', 48 + featColW + 10, noticeY + 13)
       doc.fontSize(8.5).fillColor('#475569').font('Helvetica').text(
         'Continuous server monitoring, automated node updates, and failover.',
         48 + featColW + 10,
-        noticeY + 30,
+        noticeY + 29,
         { width: featColW - 24, lineGap: 2 }
       )
 
       // Col 3
-      doc.fontSize(9.5).fillColor('#0A1128').font('Helvetica-Bold').text('DIRECT DESK ASSISTANCE', 48 + featColW * 2 + 10, noticeY + 14)
+      doc.fontSize(9.5).fillColor('#0A1128').font('Helvetica-Bold').text('DIRECT DESK ASSISTANCE', 48 + featColW * 2 + 10, noticeY + 13)
       doc.fontSize(8.5).fillColor('#475569').font('Helvetica').text(
         `Instant support on WhatsApp: ${supportWhatsapp}`,
         48 + featColW * 2 + 10,
-        noticeY + 30,
+        noticeY + 29,
         { width: featColW - 24, lineGap: 2 }
       )
 
       // Vertical dividers inside feature strip
-      doc.moveTo(48 + featColW, noticeY + 10).lineTo(48 + featColW, noticeY + 66).strokeColor('#E2E8F0').lineWidth(0.8).stroke()
-      doc.moveTo(48 + featColW * 2, noticeY + 10).lineTo(48 + featColW * 2, noticeY + 66).strokeColor('#E2E8F0').lineWidth(0.8).stroke()
+      doc.moveTo(48 + featColW, noticeY + 10).lineTo(48 + featColW, noticeY + noticeH - 10).strokeColor('#E2E8F0').lineWidth(0.8).stroke()
+      doc.moveTo(48 + featColW * 2, noticeY + 10).lineTo(48 + featColW * 2, noticeY + noticeH - 10).strokeColor('#E2E8F0').lineWidth(0.8).stroke()
 
       // ==========================================
       // 8. LEGAL & VERIFICATION FOOTER
