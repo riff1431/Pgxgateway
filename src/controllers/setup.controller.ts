@@ -181,6 +181,7 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
         setupFeePresetAltUSD: config.setupFeePresetAltUSD || 565.0,
         resellerId: merchant.resellerId || 'admin_root',
         isStripeReady: Boolean(config.stripe?.isConfigured && config.stripe?.secretKey),
+        supportWhatsapp: config.supportWhatsapp || '+1 (800) 749-4283',
         hostingProvider: merchant.hostingProvider || '',
         techStack: merchant.techStack || '',
         companyDescription: merchant.companyDescription || '',
