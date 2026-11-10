@@ -241,6 +241,8 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
         volume: offer.volume || merchant.offer?.volume || 'Up to $250,000',
         settlement: offer.settlement || merchant.offer?.settlement || 'Daily (Next Day)',
         reserve: offer.reserve || merchant.offer?.reserve || '5% (90 Days)',
+        setupFee: offer.setupFee !== undefined ? String(offer.setupFee).trim() : (merchant.offer?.setupFee || '$450'),
+        monthlyFee: offer.monthlyFee !== undefined ? String(offer.monthlyFee).trim() : (merchant.offer?.monthlyFee || '$99 / month'),
         isAvailable: isNowAvailable,
         accepted: offer.accepted !== undefined ? Boolean(offer.accepted) : (merchant.offer?.accepted || false),
         acceptedAt: merchant.offer?.acceptedAt,

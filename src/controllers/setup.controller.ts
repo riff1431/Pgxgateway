@@ -229,6 +229,14 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
 
     const config = await getOrCreateSystemConfig()
 
+    let rawSetupFee = config.setupFeePriceUSD || 450.0
+    if (merchant.offer?.setupFee) {
+      const parsed = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
+      if (!isNaN(parsed) && parsed > 0) {
+        rawSetupFee = parsed
+      }
+    }
+
     return res.status(200).json({
       success: true,
       setup: {
@@ -238,12 +246,12 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
         websiteDomain: merchant.websiteDomain || merchant.website || '',
         gitRepoUrl: merchant.gitRepoUrl || '',
         setupStatus: merchant.setupStatus || 'pending_payment',
-        setupFeeAmount: merchant.setupFeeAmount || config.setupFeePriceUSD || 49.0,
+        setupFeeAmount: merchant.setupFeeAmount || rawSetupFee,
         setupPaidAt: merchant.setupPaidAt || null,
         gitCollabStatus: merchant.gitCollabStatus || 'pending',
         envConfig: merchant.envConfig || '',
         officialGithubHandle: config.officialGithubHandle || 'huipper-dev',
-        setupFeePriceUSD: config.setupFeePriceUSD || 450.0,
+        setupFeePriceUSD: rawSetupFee,
         setupFeePresetAltUSD: config.setupFeePresetAltUSD || 565.0,
         resellerId: merchant.resellerId || 'admin_root',
         isStripeReady: Boolean(config.stripe?.isConfigured && config.stripe?.secretKey),
@@ -288,19 +296,29 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
     const successUrl = `${appOrigin}/dashboard?tab=integration&setup_payment=success&session_id={CHECKOUT_SESSION_ID}`
     const cancelUrl = `${appOrigin}/dashboard?tab=integration&setup_payment=cancelled`
 
-    const feeAmount = config.setupFeePriceUSD || 450.0
+    let rawSetupFee = config.setupFeePriceUSD || 450.0
+    if (merchant.offer?.setupFee) {
+      const parsed = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
+      if (!isNaN(parsed) && parsed > 0) {
+        rawSetupFee = parsed
+      }
+    }
+
+    // 3% Stripe processing fee surcharge as requested by client
+    const stripeSurcharge = Math.round(rawSetupFee * 0.03 * 100) / 100
+    const totalAmountWithSurcharge = Math.round((rawSetupFee + stripeSurcharge) * 100) / 100
 
     // Handle dummy/sample keys seamlessly for testing & QA simulation
     if (config.stripe.secretKey.startsWith('sk_test_sample')) {
       const simulatedSessionId = `cs_test_simulated_${Date.now()}`
       merchant.setupStripeSessionId = simulatedSessionId
-      merchant.setupFeeAmount = feeAmount
+      merchant.setupFeeAmount = rawSetupFee
       merchant.setupPaidAt = new Date()
       merchant.setupStatus = 'information_pending'
 
       // Accrue 20% affiliate commission to reseller
       const commissionRate = config.affiliateCommissionRate || 20.0
-      const commissionEarned = (feeAmount * commissionRate) / 100.0
+      const commissionEarned = (rawSetupFee * commissionRate) / 100.0
       merchant.affiliateCommissionEarned = commissionEarned
       await merchant.save()
 
@@ -320,13 +338,15 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
         success: true,
         checkoutUrl: `${appOrigin}/dashboard?tab=integration&setup_payment=success&simulated=true`,
         sessionId: simulatedSessionId,
-        amount: feeAmount,
+        amount: totalAmountWithSurcharge,
+        baseAmount: rawSetupFee,
+        surcharge: stripeSurcharge,
       })
     }
 
     const session = await createStripeCheckoutSession({
       secretKey: config.stripe.secretKey,
-      amount: feeAmount,
+      amount: totalAmountWithSurcharge,
       currency: 'usd',
       productName: `PGX Gateway Setup & White-Glove Integration`,
       merchantRefId: merchant.refId || String(merchant._id),
@@ -335,22 +355,40 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       orderId: `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
       successUrl,
       cancelUrl,
+      lineItems: [
+        {
+          name: 'PGX Gateway Setup & White-Glove Integration',
+          description: `Account Activation & Dedicated Underwriting Desk for ${merchant.legalName || merchant.fullName}`,
+          amount: rawSetupFee,
+          quantity: 1,
+        },
+        {
+          name: 'Stripe Card Processing Surcharge (3%)',
+          description: 'Standard 3% credit/debit card payment processing surcharge',
+          amount: stripeSurcharge,
+          quantity: 1,
+        },
+      ],
       metadata: {
         type: 'setup_fee',
         merchantId: merchant._id.toString(),
         resellerId: merchant.resellerId || 'admin_root',
+        baseFee: String(rawSetupFee),
+        stripeSurcharge: String(stripeSurcharge),
       },
     })
 
     merchant.setupStripeSessionId = session.id
-    merchant.setupFeeAmount = feeAmount
+    merchant.setupFeeAmount = rawSetupFee
     await merchant.save()
 
     return res.status(200).json({
       success: true,
       checkoutUrl: session.url,
       sessionId: session.id,
-      amount: feeAmount,
+      amount: totalAmountWithSurcharge,
+      baseAmount: rawSetupFee,
+      surcharge: stripeSurcharge,
     })
   } catch (error) {
     next(error)

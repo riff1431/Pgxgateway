@@ -33,6 +33,12 @@ export interface CreateSessionParams {
   successUrl: string
   cancelUrl: string
   metadata?: Record<string, string>
+  lineItems?: Array<{
+    name: string
+    description?: string
+    amount: number
+    quantity?: number
+  }>
 }
 
 export async function createStripeCheckoutSession(params: CreateSessionParams): Promise<Stripe.Checkout.Session> {
@@ -44,22 +50,37 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
     throw new Error('Transaction amount must be at least $0.50.')
   }
 
+  const sessionLineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
+    params.lineItems && params.lineItems.length > 0
+      ? params.lineItems.map((item) => ({
+          price_data: {
+            currency,
+            product_data: {
+              name: item.name,
+              description: item.description,
+            },
+            unit_amount: Math.round(item.amount * 100),
+          },
+          quantity: item.quantity || 1,
+        }))
+      : [
+          {
+            price_data: {
+              currency,
+              product_data: {
+                name: params.productName || `Payment to ${params.merchantRefId}`,
+                description: params.orderId ? `Order #${params.orderId}` : `Ref: ${params.merchantRefId}`,
+              },
+              unit_amount: unitAmountCents,
+            },
+            quantity: 1,
+          },
+        ]
+
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
     customer_email: params.customerEmail || undefined,
-    line_items: [
-      {
-        price_data: {
-          currency,
-          product_data: {
-            name: params.productName || `Payment to ${params.merchantRefId}`,
-            description: params.orderId ? `Order #${params.orderId}` : `Ref: ${params.merchantRefId}`,
-          },
-          unit_amount: unitAmountCents,
-        },
-        quantity: 1,
-      },
-    ],
+    line_items: sessionLineItems,
     metadata: {
       merchant_ref_id: params.merchantRefId,
       reseller_id: params.resellerId,

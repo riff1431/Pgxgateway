@@ -100,6 +100,8 @@ export interface IMerchant extends Document {
     volume: string
     settlement: string
     reserve: string
+    setupFee?: string
+    monthlyFee?: string
     isAvailable: boolean
     accepted?: boolean
     acceptedAt?: Date
@@ -245,6 +247,8 @@ const MerchantSchema = new Schema<IMerchant>(
       volume: { type: String, default: '' },
       settlement: { type: String, default: '' },
       reserve: { type: String, default: '' },
+      setupFee: { type: String, default: '$450' },
+      monthlyFee: { type: String, default: '$99 / month' },
       isAvailable: { type: Boolean, default: false },
       accepted: { type: Boolean, default: false },
       acceptedAt: { type: Date },
