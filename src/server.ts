@@ -3,10 +3,14 @@ import { createApp } from './app.js'
 import { connectDB, disconnectDB } from './config/db.js'
 import { config } from './config/env.js'
 import { initSocket } from './services/socket.service.js'
+import { initCronJobs } from './services/cron.service.js'
 
 async function bootstrap() {
   // Connect to MongoDB
   await connectDB()
+
+  // Initialize Background Cron Schedulers
+  initCronJobs()
 
   const app = createApp()
   const httpServer = http.createServer(app)

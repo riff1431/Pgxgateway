@@ -24,6 +24,8 @@ export interface IInvoice extends Document {
   resellerShareRate: number // e.g., 2.0%
   resellerShareAmount: number // eligibleVolume * (resellerShareRate / 100)
   platformRetainedAmount: number // payableAmount - resellerShareAmount
+  invoiceType?: 'weekly_volume' | 'monthly_maintenance'
+  surchargeAmount?: number
   status: InvoiceStatus
   dueDate: Date
   paidAt?: Date
@@ -62,6 +64,13 @@ const InvoiceSchema = new Schema<IInvoice>(
     resellerShareRate: { type: Number, default: 2.0 },
     resellerShareAmount: { type: Number, default: 0 },
     platformRetainedAmount: { type: Number, default: 0 },
+    invoiceType: {
+      type: String,
+      enum: ['weekly_volume', 'monthly_maintenance'],
+      default: 'weekly_volume',
+      index: true,
+    },
+    surchargeAmount: { type: Number, default: 0 },
     status: {
       type: String,
       enum: ['draft', 'issued', 'pending', 'under_review', 'paid', 'overdue', 'disputed', 'adjusted'],

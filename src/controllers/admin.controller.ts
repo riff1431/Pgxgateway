@@ -10,6 +10,8 @@ import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Transaction } from '../models/Transaction.js'
 import { emitToMerchant, emitToAdmins, WS_EVENTS } from '../services/socket.service.js'
 import { uploadBufferToCloudinary } from '../config/cloudinary.js'
+import { triggerManualSubscriptionCycle } from '../services/cron.service.js'
+import { executeMerchantMonthlyCharge } from '../services/subscription.service.js'
 
 // Admin / Reseller / Super Admin Login
 export async function adminLogin(req: Request, res: Response, next: NextFunction) {
@@ -1177,5 +1179,46 @@ export async function reassignMerchantReseller(req: AdminRequest, res: Response,
     })
   } catch (error) {
     next(error)
+  }
+}
+
+// ----------------------------------------------------
+// 12. Super Admin: On-Demand Subscription Management
+// ----------------------------------------------------
+export async function triggerAdminSubscriptionCycle(req: AdminRequest, res: Response, _next: NextFunction) {
+  try {
+    const report = await triggerManualSubscriptionCycle()
+    return res.status(200).json({
+      success: true,
+      message: `Subscription billing cycle executed. ${report.succeeded} card debits succeeded, ${report.invoiced} crypto invoices generated, ${report.failed} failures.`,
+      report,
+    })
+  } catch (error: any) {
+    return res.status(400).json({
+      success: false,
+      message: error?.message || 'Failed to trigger subscription billing cycle.',
+    })
+  }
+}
+
+export async function chargeMerchantSubscriptionDirect(req: AdminRequest, res: Response, _next: NextFunction) {
+  try {
+    const merchantId = String(req.params.merchantId)
+    const result = await executeMerchantMonthlyCharge(merchantId)
+    return res.status(200).json({
+      success: result.status !== 'failed',
+      message:
+        result.status === 'succeeded'
+          ? `Successfully auto-debited $${result.amount} via Stripe card on file.`
+          : result.status === 'invoiced'
+          ? `Successfully issued monthly maintenance invoice for $${result.amount} USDT.`
+          : `Charge failed: ${result.error}`,
+      result,
+    })
+  } catch (error: any) {
+    return res.status(400).json({
+      success: false,
+      message: error?.message || 'Failed to charge merchant subscription.',
+    })
   }
 }

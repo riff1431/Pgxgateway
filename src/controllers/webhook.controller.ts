@@ -94,6 +94,24 @@ async function processSetupFeeCheckout(session: Stripe.Checkout.Session, eventId
   merchant.setupPaidAt = new Date()
   merchant.setupStripeSessionId = session.id
 
+  // Initialize 30-Day Recurring Monthly Maintenance Subscription
+  const customerId = (typeof session.customer === 'string' ? session.customer : session.customer?.id) || metadata.customerId || merchant.subscription?.stripeCustomerId
+  let monthlyFee = 99.0
+  if (merchant.offer?.monthlyFee) {
+    const parsed = parseFloat(String(merchant.offer.monthlyFee).replace(/[^0-9.]/g, ''))
+    if (!isNaN(parsed) && parsed > 0) monthlyFee = parsed
+  }
+
+  merchant.subscription = {
+    status: 'active',
+    monthlyFee,
+    nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30-Day billing cycle
+    lastBilledDate: new Date(),
+    stripeCustomerId: customerId,
+    autoRenew: true,
+    failureCount: 0,
+  }
+
   // Credit affiliate commission to referring reseller (if any)
   if (merchant.resellerId && merchant.resellerId !== 'admin_root') {
     const sysConfig = await SystemConfig.findOne()

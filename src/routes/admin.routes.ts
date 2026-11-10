@@ -22,6 +22,8 @@ import {
   resetResellerPassword,
   updateResellerFeeStructure,
   reassignMerchantReseller,
+  triggerAdminSubscriptionCycle,
+  chargeMerchantSubscriptionDirect,
 } from '../controllers/admin.controller.js'
 import { adminProtect, superAdminOnly } from '../middleware/admin.middleware.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
@@ -57,6 +59,10 @@ router.patch('/super-resellers/:resellerId/status', superAdminOnly, updateResell
 router.post('/super-resellers/:resellerId/reset-password', superAdminOnly, resetResellerPassword)
 router.patch('/super-resellers/:resellerId/fees', superAdminOnly, updateResellerFeeStructure)
 router.patch('/super-merchants/:merchantId/reassign', superAdminOnly, reassignMerchantReseller)
+
+// Recurring Monthly Maintenance Subscriptions
+router.post('/subscriptions/trigger-cycle', superAdminOnly, triggerAdminSubscriptionCycle)
+router.post('/merchants/:merchantId/charge-subscription', superAdminOnly, chargeMerchantSubscriptionDirect)
 
 // White-Label & System Branding Configuration (Exclusively Super Admin)
 router.get('/config', getSystemConfig)

@@ -107,6 +107,19 @@ export interface IMerchant extends Document {
     acceptedAt?: Date
   }
 
+  // Monthly Recurring Maintenance Subscription
+  subscription?: {
+    status: 'active' | 'past_due' | 'canceled' | 'none'
+    monthlyFee: number
+    nextBillingDate?: Date
+    lastBilledDate?: Date
+    stripeCustomerId?: string
+    paymentMethodId?: string
+    autoRenew: boolean
+    failureCount?: number
+    gracePeriodEnd?: Date
+  }
+
   createdAt: Date
   updatedAt: Date
 
@@ -252,6 +265,24 @@ const MerchantSchema = new Schema<IMerchant>(
       isAvailable: { type: Boolean, default: false },
       accepted: { type: Boolean, default: false },
       acceptedAt: { type: Date },
+    },
+
+    // Monthly Recurring Maintenance Subscription
+    subscription: {
+      status: {
+        type: String,
+        enum: ['active', 'past_due', 'canceled', 'none'],
+        default: 'none',
+        index: true,
+      },
+      monthlyFee: { type: Number, default: 99.0 },
+      nextBillingDate: { type: Date },
+      lastBilledDate: { type: Date },
+      stripeCustomerId: { type: String, trim: true },
+      paymentMethodId: { type: String, trim: true },
+      autoRenew: { type: Boolean, default: true },
+      failureCount: { type: Number, default: 0 },
+      gracePeriodEnd: { type: Date },
     },
   },
   {

@@ -29,7 +29,9 @@ export interface CreateSessionParams {
   merchantRefId: string
   resellerId: string
   orderId?: string
+  customerId?: string
   customerEmail?: string
+  setupFutureUsage?: 'off_session' | 'on_session'
   successUrl: string
   cancelUrl: string
   metadata?: Record<string, string>
@@ -77,9 +79,8 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
           },
         ]
 
-  const session = await stripe.checkout.sessions.create({
+  const sessionParams: Stripe.Checkout.SessionCreateParams = {
     mode: 'payment',
-    customer_email: params.customerEmail || undefined,
     line_items: sessionLineItems,
     metadata: {
       merchant_ref_id: params.merchantRefId,
@@ -88,6 +89,7 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
       ...(params.metadata || {}),
     },
     payment_intent_data: {
+      setup_future_usage: params.setupFutureUsage || undefined,
       metadata: {
         merchant_ref_id: params.merchantRefId,
         reseller_id: params.resellerId,
@@ -97,9 +99,97 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
     },
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,
+  }
+
+  if (params.customerId) {
+    sessionParams.customer = params.customerId
+  } else if (params.customerEmail) {
+    sessionParams.customer_email = params.customerEmail
+  }
+
+  const session = await stripe.checkout.sessions.create(sessionParams)
+  return session
+}
+
+export interface CreateCustomerParams {
+  secretKey: string
+  email: string
+  name?: string
+  merchantRefId?: string
+  metadata?: Record<string, string>
+}
+
+export async function getOrCreateStripeCustomer(params: CreateCustomerParams): Promise<Stripe.Customer> {
+  const stripe = getStripeClient(params.secretKey)
+  const email = params.email.trim().toLowerCase()
+
+  const existingCustomers = await stripe.customers.list({
+    email,
+    limit: 1,
   })
 
-  return session
+  if (existingCustomers.data && existingCustomers.data.length > 0) {
+    return existingCustomers.data[0]
+  }
+
+  const newCustomer = await stripe.customers.create({
+    email,
+    name: params.name?.trim() || undefined,
+    metadata: {
+      merchant_ref_id: params.merchantRefId || '',
+      ...(params.metadata || {}),
+    },
+  })
+
+  return newCustomer
+}
+
+export interface OffSessionChargeParams {
+  secretKey: string
+  customerId: string
+  amount: number // in major units (e.g. 101.97 USD)
+  currency?: string
+  description: string
+  merchantRefId: string
+  resellerId: string
+  metadata?: Record<string, string>
+}
+
+export async function chargeStripeOffSession(params: OffSessionChargeParams): Promise<Stripe.PaymentIntent> {
+  const stripe = getStripeClient(params.secretKey)
+  const currency = (params.currency || 'usd').toLowerCase()
+  const amountCents = Math.round(params.amount * 100)
+
+  // Find saved payment methods for customer
+  const paymentMethods = await stripe.paymentMethods.list({
+    customer: params.customerId,
+    type: 'card',
+    limit: 5,
+  })
+
+  if (!paymentMethods.data || paymentMethods.data.length === 0) {
+    throw new Error(`No saved card payment methods found on file for customer ${params.customerId}. Merchant must update billing card.`)
+  }
+
+  const defaultPaymentMethod = paymentMethods.data[0].id
+
+  // Create and confirm PaymentIntent off-session
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: amountCents,
+    currency,
+    customer: params.customerId,
+    payment_method: defaultPaymentMethod,
+    off_session: true,
+    confirm: true,
+    description: params.description,
+    metadata: {
+      merchant_ref_id: params.merchantRefId,
+      reseller_id: params.resellerId,
+      ...(params.metadata || {}),
+    },
+  })
+
+  return paymentIntent
 }
 
 export function constructWebhookEvent(

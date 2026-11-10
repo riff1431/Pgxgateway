@@ -4,7 +4,8 @@ import { Merchant } from '../models/Merchant.js'
 import { SetupMessage } from '../models/SetupMessage.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Notification } from '../models/Notification.js'
-import { createStripeCheckoutSession, getStripeClient } from '../services/stripe.service.js'
+import { createStripeCheckoutSession, getStripeClient, getOrCreateStripeCustomer } from '../services/stripe.service.js'
+import { parseMonthlyFee } from '../services/subscription.service.js'
 import { emitToAdmins, emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
 import { AdminRequest } from '../middleware/admin.middleware.js'
@@ -265,6 +266,11 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
         preferredDomain: merchant.preferredDomain || '',
         altDomain: merchant.altDomain || '',
         integrationNotes: merchant.integrationNotes || '',
+        subscription: merchant.subscription || {
+          status: 'none',
+          monthlyFee: parseMonthlyFee(merchant.offer?.monthlyFee) || 99.0,
+          autoRenew: true,
+        },
       },
     })
   } catch (error) {
@@ -315,6 +321,14 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       merchant.setupFeeAmount = rawSetupFee
       merchant.setupPaidAt = new Date()
       merchant.setupStatus = 'information_pending'
+      merchant.subscription = {
+        status: 'active',
+        monthlyFee: parseMonthlyFee(merchant.offer?.monthlyFee) || 99.0,
+        nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        lastBilledDate: new Date(),
+        autoRenew: true,
+        failureCount: 0,
+      }
 
       // Accrue 20% affiliate commission to reseller
       const commissionRate = config.affiliateCommissionRate || 20.0
@@ -344,6 +358,33 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       })
     }
 
+    // Tokenize card for off_session auto-renewal by linking a persistent Stripe Customer
+    let customerId: string | undefined = merchant.subscription?.stripeCustomerId
+    try {
+      if (!customerId) {
+        const stripeCustomer = await getOrCreateStripeCustomer({
+          secretKey: config.stripe.secretKey,
+          email: merchant.businessEmail,
+          name: merchant.legalName || merchant.fullName,
+          merchantRefId: merchant.refId || String(merchant._id),
+          metadata: {
+            merchantId: String(merchant._id),
+            resellerId: merchant.resellerId || 'admin_root',
+          },
+        })
+        customerId = stripeCustomer.id
+        merchant.subscription = {
+          ...(merchant.subscription || { autoRenew: true }),
+          stripeCustomerId: customerId,
+          monthlyFee: parseMonthlyFee(merchant.offer?.monthlyFee) || 99.0,
+          status: merchant.subscription?.status || 'none',
+          autoRenew: true,
+        }
+      }
+    } catch (custErr) {
+      console.warn('[Setup Checkout] Warning fetching/creating Stripe customer:', custErr)
+    }
+
     const session = await createStripeCheckoutSession({
       secretKey: config.stripe.secretKey,
       amount: totalAmountWithSurcharge,
@@ -351,7 +392,9 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       productName: `PGX Gateway Setup & White-Glove Integration`,
       merchantRefId: merchant.refId || String(merchant._id),
       resellerId: merchant.resellerId || 'admin_root',
+      customerId,
       customerEmail: merchant.businessEmail,
+      setupFutureUsage: 'off_session',
       orderId: `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
       successUrl,
       cancelUrl,
@@ -375,6 +418,7 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
         resellerId: merchant.resellerId || 'admin_root',
         baseFee: String(rawSetupFee),
         stripeSurcharge: String(stripeSurcharge),
+        customerId: customerId || '',
       },
     })
 
