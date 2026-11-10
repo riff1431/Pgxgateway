@@ -364,7 +364,7 @@ export async function getSystemConfig(_req: Request, res: Response, next: NextFu
         supportEmail: 'support@pgxgateway.com',
         supportPhone: '+1 (800) 749-4283',
         supportTelegram: '@pgxsupport',
-        supportWhatsapp: '+1 (800) 749-4283',
+        supportWhatsapp: '+1 (437) 577-8785',
       })
     }
     res.status(200).json({

@@ -58,7 +58,7 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     },
     supportWhatsapp: {
       type: String,
-      default: '+1 (800) 749-4283',
+      default: '+1 (437) 577-8785',
       trim: true,
     },
     stripe: {

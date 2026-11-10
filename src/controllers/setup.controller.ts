@@ -18,6 +18,7 @@ async function getOrCreateSystemConfig(): Promise<ISystemConfig> {
       setupFeePresetAltUSD: 565.0,
       officialGithubHandle: 'huipper-dev',
       affiliateCommissionRate: 20.0,
+      supportWhatsapp: '+1 (437) 577-8785',
       stripe: {
         publishableKey: '',
         secretKey: '',
@@ -26,6 +27,9 @@ async function getOrCreateSystemConfig(): Promise<ISystemConfig> {
         mode: 'test',
       },
     })
+  } else if (!config.supportWhatsapp || config.supportWhatsapp === '+1 (800) 749-4283') {
+    config.supportWhatsapp = '+1 (437) 577-8785'
+    await config.save()
   }
   return config
 }
@@ -243,7 +247,7 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
         setupFeePresetAltUSD: config.setupFeePresetAltUSD || 565.0,
         resellerId: merchant.resellerId || 'admin_root',
         isStripeReady: Boolean(config.stripe?.isConfigured && config.stripe?.secretKey),
-        supportWhatsapp: config.supportWhatsapp || '+1 (800) 749-4283',
+        supportWhatsapp: config.supportWhatsapp && config.supportWhatsapp !== '+1 (800) 749-4283' ? config.supportWhatsapp : '+1 (437) 577-8785',
         hostingProvider: merchant.hostingProvider || '',
         techStack: merchant.techStack || '',
         companyDescription: merchant.companyDescription || '',
