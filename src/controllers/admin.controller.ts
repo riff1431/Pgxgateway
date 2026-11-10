@@ -1211,7 +1211,7 @@ export async function chargeMerchantSubscriptionDirect(req: AdminRequest, res: R
         result.status === 'succeeded'
           ? `Successfully auto-debited $${result.amount} via Stripe card on file.`
           : result.status === 'invoiced'
-          ? `Successfully issued monthly maintenance invoice for $${result.amount} USDT.`
+          ? `Successfully issued monthly maintenance invoice for $${result.amount} in BTC.`
           : `Charge failed: ${result.error}`,
       result,
     })

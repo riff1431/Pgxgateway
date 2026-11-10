@@ -104,7 +104,7 @@ export async function generateInvoicePdfBuffer(
       doc.fontSize(7.5).fillColor('#0f172a').font('Helvetica').text(periodStr, 455, metaY + 47)
 
       doc.fontSize(8).fillColor('#64748b').font('Helvetica-Bold').text('Payment Rail:', 392, metaY + 61)
-      const railStr = invoice.paymentMethod === 'stripe' ? 'Stripe Card (Auto-Debit)' : 'USDT Crypto / Wire'
+      const railStr = invoice.paymentMethod === 'stripe' ? 'Stripe Card (Auto-Debit)' : 'Bitcoin (BTC) / Wire'
       doc.fontSize(7.5).fillColor('#0f172a').font('Helvetica').text(railStr, 455, metaY + 61)
 
       // ==========================================
@@ -181,7 +181,7 @@ export async function generateInvoicePdfBuffer(
       } else {
         doc.text(`Grace Period Active Until: ${new Date(invoice.dueDate).toLocaleDateString()}`, 52, summaryTop + 50)
       }
-      doc.fontSize(7.5).fillColor('#64748b').text('Direct settlement available via Stripe or USDT on WhatsApp Desk.', 52, summaryTop + 68)
+      doc.fontSize(7.5).fillColor('#64748b').text('Direct settlement available via Stripe or Bitcoin (BTC) on WhatsApp Desk.', 52, summaryTop + 68)
 
       // Right box: Financial Totals Table
       const totalsX = 350

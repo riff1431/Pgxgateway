@@ -389,7 +389,7 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       secretKey: config.stripe.secretKey,
       amount: totalAmountWithSurcharge,
       currency: 'usd',
-      productName: `PGX Gateway Setup & White-Glove Integration`,
+      productName: `Setup & Integration`,
       merchantRefId: merchant.refId || String(merchant._id),
       resellerId: merchant.resellerId || 'admin_root',
       customerId,
@@ -400,7 +400,7 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       cancelUrl,
       lineItems: [
         {
-          name: 'PGX Gateway Setup & White-Glove Integration',
+          name: 'Setup & Integration',
           description: `Account Activation & Dedicated Underwriting Desk for ${merchant.legalName || merchant.fullName}`,
           amount: rawSetupFee,
           quantity: 1,

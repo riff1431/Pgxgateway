@@ -228,7 +228,7 @@ export async function executeMerchantMonthlyCharge(merchantId: string): Promise<
     }
   }
 
-  // 2. Crypto Manual Invoice Path (0% Surcharge, $99.00 USDT)
+  // 2. Crypto Manual Invoice Path (0% Surcharge, $99.00 in BTC)
   const dueDate = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
   await Invoice.create({
     invoiceNumber,
@@ -245,7 +245,7 @@ export async function executeMerchantMonthlyCharge(merchantId: string): Promise<
     invoiceType: 'monthly_maintenance',
     status: 'issued',
     dueDate,
-    adminNotes: `Monthly platform maintenance fee ($${baseMonthlyFee} USDT). Settle via WhatsApp finance desk (+1 437 577-8785) with 0% processing fee.`,
+    adminNotes: `Monthly platform maintenance fee ($${baseMonthlyFee} in BTC). Settle via WhatsApp finance desk (+1 437 577-8785) with 0% processing fee.`,
   })
 
   // Set subscription status
@@ -261,7 +261,7 @@ export async function executeMerchantMonthlyCharge(merchantId: string): Promise<
   await Notification.create({
     merchantId: merchant._id,
     title: 'Monthly Platform Maintenance Invoice Issued',
-    content: `Invoice #${invoiceNumber} for $${baseMonthlyFee} USDT (0% fee) has been generated. Due date: ${dueDate.toLocaleDateString()}.`,
+    content: `Invoice #${invoiceNumber} for $${baseMonthlyFee} in BTC (0% fee) has been generated. Due date: ${dueDate.toLocaleDateString()}.`,
     type: 'system',
   })
 
