@@ -8,7 +8,8 @@
     "dev": "nodemon",
     "dev:tsx": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "cron:subscriptions": "node dist/scripts/runSubscriptionCycle.js"
   },
   "keywords": [
     "express",
