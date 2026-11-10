@@ -10,6 +10,7 @@ import { createStripeCheckoutSession } from '../services/stripe.service.js'
 import { emitToAdmins, emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
 import { AdminRequest } from '../middleware/admin.middleware.js'
+import { generateInvoicePdfBuffer } from '../services/pdf.service.js'
 
 // ----------------------------------------------------
 // 1. MERCHANT: View Weekly Invoices
@@ -319,6 +320,61 @@ export async function updateAdminInvoiceStatus(req: AdminRequest, res: Response,
       message: `Invoice ${invoice.invoiceNumber} updated to ${invoice.status}.`,
       invoice,
     })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// ----------------------------------------------------
+// 5. PDF EXPORT: Merchant & Admin PDF Invoice Streaming
+// ----------------------------------------------------
+export async function downloadInvoicePdf(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user!._id
+    const invoiceId = String(req.params.invoiceId)
+
+    const invoice = await Invoice.findOne({ _id: invoiceId, merchantId })
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found.' })
+    }
+
+    const merchant = await Merchant.findById(merchantId)
+    const config = await SystemConfig.findOne()
+
+    const pdfBuffer = await generateInvoicePdfBuffer(invoice, merchant, {
+      siteName: config?.siteName || 'PGX GATEWAY PLATFORM',
+      supportWhatsapp: config?.supportWhatsapp || '+1 (437) 577-8785',
+      supportEmail: config?.supportEmail || 'finance@pgxgateway.com',
+    })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.pdf"`)
+    return res.send(pdfBuffer)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function downloadAdminInvoicePdf(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const invoiceId = String(req.params.invoiceId)
+    const invoice = await Invoice.findById(invoiceId)
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found.' })
+    }
+
+    const merchant = await Merchant.findById(invoice.merchantId)
+    const config = await SystemConfig.findOne()
+
+    const pdfBuffer = await generateInvoicePdfBuffer(invoice, merchant, {
+      siteName: config?.siteName || 'PGX GATEWAY PLATFORM',
+      supportWhatsapp: config?.supportWhatsapp || '+1 (437) 577-8785',
+      supportEmail: config?.supportEmail || 'finance@pgxgateway.com',
+    })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.pdf"`)
+    return res.send(pdfBuffer)
   } catch (error) {
     next(error)
   }
