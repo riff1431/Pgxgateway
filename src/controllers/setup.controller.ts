@@ -4,7 +4,7 @@ import { Merchant } from '../models/Merchant.js'
 import { SetupMessage } from '../models/SetupMessage.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Notification } from '../models/Notification.js'
-import { createStripeCheckoutSession } from '../services/stripe.service.js'
+import { createStripeCheckoutSession, getStripeClient } from '../services/stripe.service.js'
 import { emitToAdmins, emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
 import { AdminRequest } from '../middleware/admin.middleware.js'
@@ -125,6 +125,26 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
       }
 
       config.stripe.isConfigured = Boolean(config.stripe.publishableKey && config.stripe.secretKey)
+
+      // Sync Stripe credentials to Primary Gateway (admin_root / PlayGroundX)
+      // so that both Setup Fees and Sub-Merchant checkouts are routed seamlessly
+      try {
+        await ResellerConfig.findOneAndUpdate(
+          { resellerId: 'admin_root' },
+          {
+            $set: {
+              'stripe.publishableKey': config.stripe.publishableKey,
+              ...(config.stripe.secretKey ? { 'stripe.secretKey': config.stripe.secretKey } : {}),
+              ...(config.stripe.webhookSecret ? { 'stripe.webhookSecret': config.stripe.webhookSecret } : {}),
+              'stripe.mode': config.stripe.mode,
+              'stripe.isConfigured': config.stripe.isConfigured,
+            },
+          },
+          { upsert: true }
+        )
+      } catch (syncErr) {
+        console.warn('[Platform Settings] Warning syncing Stripe config to admin_root:', syncErr)
+      }
     }
 
     await config.save()
@@ -148,6 +168,48 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
     })
   } catch (error) {
     next(error)
+  }
+}
+
+// ----------------------------------------------------
+// 1.1 SUPER ADMIN: Test Stripe API Connection
+// ----------------------------------------------------
+export async function testStripeConnection(req: AdminRequest, res: Response, _next: NextFunction) {
+  try {
+    const { secretKey } = req.body
+    let keyToTest = (secretKey || '').trim()
+
+    // If key not passed or masked, fall back to saved config
+    if (!keyToTest || keyToTest.includes('••••') || keyToTest.includes('...')) {
+      const config = await getOrCreateSystemConfig()
+      keyToTest = config.stripe?.secretKey || ''
+    }
+
+    if (!keyToTest) {
+      return res.status(400).json({
+        success: false,
+        message: 'No Stripe Secret Key found to test. Please enter a valid Stripe Secret Key (sk_live_... or sk_test_...).',
+      })
+    }
+
+    // Call Stripe official API directly to test authentication
+    const stripe = getStripeClient(keyToTest)
+    const balance = await stripe.balance.retrieve()
+
+    const currencies = Array.from(new Set(balance.available.map((b) => b.currency.toUpperCase())))
+
+    return res.status(200).json({
+      success: true,
+      livemode: balance.livemode,
+      currencies,
+      message: `Stripe authenticated successfully! Connected in ${balance.livemode ? 'LIVE PRODUCTION' : 'TEST'} mode. Supported currencies: ${currencies.join(', ') || 'USD'}.`,
+    })
+  } catch (error: any) {
+    console.error('[Stripe Test Connection] Error:', error)
+    return res.status(400).json({
+      success: false,
+      message: error?.message || 'Failed to authenticate with Stripe. Please check your Secret Key.',
+    })
   }
 }
 

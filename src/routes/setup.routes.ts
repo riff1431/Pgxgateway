@@ -9,6 +9,7 @@ import {
   sendSetupMessage,
   getAdminIntegrations,
   updateAdminIntegrationStatus,
+  testStripeConnection,
 } from '../controllers/setup.controller.js'
 import { protect } from '../middleware/auth.middleware.js'
 import { adminProtect, superAdminOnly } from '../middleware/admin.middleware.js'
@@ -27,6 +28,7 @@ router.post('/chat/:merchantId', sendSetupMessage)
 // Super Admin Management
 router.get('/admin/settings', adminProtect, superAdminOnly, getPlatformSettings)
 router.patch('/admin/settings', adminProtect, superAdminOnly, updatePlatformSettings)
+router.post('/admin/test-stripe', adminProtect, superAdminOnly, testStripeConnection)
 router.get('/admin/desk', adminProtect, superAdminOnly, getAdminIntegrations)
 router.patch('/admin/desk/:merchantId', adminProtect, superAdminOnly, updateAdminIntegrationStatus)
 
