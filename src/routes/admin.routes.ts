@@ -4,6 +4,7 @@ import {
   getApplications,
   getApplicationById,
   reviewApplication,
+  deleteMerchantApplication,
   getAdminStats,
   getSystemConfig,
   updateSystemConfig,
@@ -44,6 +45,7 @@ router.get('/stats', getAdminStats)
 router.get('/applications', getApplications)
 router.get('/applications/:id', getApplicationById)
 router.patch('/applications/:id/review', reviewApplication)
+router.delete('/applications/:id', deleteMerchantApplication)
 
 // Multi-Tenant Reseller & Stripe Gateway Settings
 router.get('/stripe-config', getResellerStripeConfig)

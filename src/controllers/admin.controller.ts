@@ -8,6 +8,8 @@ import { Notification } from '../models/Notification.js'
 import { SystemConfig } from '../models/SystemConfig.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Transaction } from '../models/Transaction.js'
+import { Invoice } from '../models/Invoice.js'
+import { SetupMessage } from '../models/SetupMessage.js'
 import { emitToMerchant, emitToAdmins, WS_EVENTS } from '../services/socket.service.js'
 import { uploadBufferToCloudinary } from '../config/cloudinary.js'
 import { triggerManualSubscriptionCycle } from '../services/cron.service.js'
@@ -317,6 +319,57 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
       success: true,
       message: `Merchant application ${status} successfully.`,
       data: merchant,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Delete Merchant Application & Cascade Associated Records (Test Account Cleanup)
+export async function deleteMerchantApplication(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Merchant application not found.',
+      })
+    }
+
+    // Multi-tenant scoping: Resellers can only delete merchants belonging to their tenant
+    if (req.admin?.role === 'admin' && merchant.resellerId && req.admin.resellerId) {
+      if (merchant.resellerId !== req.admin.resellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: You can only delete merchant applications within your assigned reseller tenant.',
+        })
+      }
+    }
+
+    const merchantRef = merchant.refId || merchant.legalName || merchant.fullName || id
+
+    // Cascade delete related records across all collections in parallel
+    await Promise.allSettled([
+      Invoice.deleteMany({ merchantId: id }),
+      Transaction.deleteMany({ $or: [{ merchantId: id }, { merchantId: String(id) }, { merchantRefId: merchant.refId }] }),
+      Notification.deleteMany({ merchantId: id }),
+      SetupMessage.deleteMany({ merchantId: id }),
+    ])
+
+    await Merchant.findByIdAndDelete(id)
+
+    // Notify connected admin sessions via WebSocket to refresh tables
+    emitToAdmins(WS_EVENTS.APPLICATION_UPDATED, {
+      action: 'deleted',
+      merchantId: id,
+      timestamp: new Date().toISOString(),
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: `Merchant application (${merchantRef}) and all associated records have been permanently deleted.`,
     })
   } catch (error) {
     next(error)
