@@ -45,23 +45,27 @@ export async function generateInvoicePdfBuffer(
       // ==========================================
       // 2. HEADER: BRANDING & INVOICE TITLE
       // ==========================================
-      // Left: Platform Logo & Title (Bigger fonts)
-      doc.fontSize(24).fillColor('#0A1128').font('Helvetica-Bold').text(siteName, 48, 30)
-      doc.fontSize(8.5).fillColor('#64748B').font('Helvetica-Bold').text(
-        'ENTERPRISE PAYMENT ACQUIRING & SETTLEMENT NETWORK',
+      // Left: Platform Logo & Title (Strict bounded box width: 260 to prevent ANY collision)
+      const brandTitle = (options?.siteName || 'PGX GATEWAY').replace(/ PLATFORM$/i, '')
+      doc.fontSize(22).fillColor('#0A1128').font('Helvetica-Bold').text(brandTitle, 48, 28, {
+        width: 260,
+      })
+      doc.fontSize(8).fillColor('#64748B').font('Helvetica-Bold').text(
+        'ENTERPRISE PAYMENT ACQUIRING & SETTLEMENT',
         48,
-        58
+        54,
+        { width: 260 }
       )
 
-      // Right: Document Title & Invoice Number
+      // Right: Document Title & Invoice Number (Strict bounded box at x: 318, width: 230)
       const invoiceTypeLabel = isMaintenance ? 'MAINTENANCE INVOICE' : 'SETTLEMENT STATEMENT'
-      doc.fontSize(18).fillColor('#0F172A').font('Helvetica-Bold').text(invoiceTypeLabel, 280, 28, {
+      doc.fontSize(16).fillColor('#0F172A').font('Helvetica-Bold').text(invoiceTypeLabel, 318, 28, {
         align: 'right',
-        width: 268,
+        width: 230,
       })
-      doc.fontSize(11).fillColor('#0284C7').font('Helvetica-Bold').text(`#${invoice.invoiceNumber}`, 280, 50, {
+      doc.fontSize(10.5).fillColor('#0284C7').font('Helvetica-Bold').text(`#${invoice.invoiceNumber}`, 318, 48, {
         align: 'right',
-        width: 268,
+        width: 230,
       })
 
       // Status Pill (Clean vector dot + bold text)

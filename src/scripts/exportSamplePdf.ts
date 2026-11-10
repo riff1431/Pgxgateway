@@ -33,7 +33,7 @@ async function generateSample() {
 
   console.log('Generating PDF buffer...')
   const pdfBuffer = await generateInvoicePdfBuffer(sampleInvoice, sampleMerchant, {
-    siteName: 'PGX GATEWAY PLATFORM',
+    siteName: 'PGX GATEWAY',
     supportWhatsapp: '+1 (437) 577-8785',
     supportEmail: 'finance@pgxgateway.com',
   })
