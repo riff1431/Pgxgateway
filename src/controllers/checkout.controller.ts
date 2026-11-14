@@ -108,11 +108,13 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
         })
 
         if (bridgeRes.ok) {
-          const bridgeData = (await bridgeRes.json()) as { sessionId: string; checkoutUrl: string }
+          const bridgeData = (await bridgeRes.json()) as any
+          const sessionId = bridgeData.sessionId || bridgeData.data?.sessionId
+          const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
           return res.status(200).json({
             success: true,
-            sessionId: bridgeData.sessionId,
-            checkoutUrl: bridgeData.checkoutUrl,
+            sessionId,
+            checkoutUrl,
             mode: 'ecom_bridge',
           })
         } else {
