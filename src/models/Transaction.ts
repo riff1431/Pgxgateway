@@ -24,9 +24,11 @@ export interface ITransaction extends Document {
   tier?: 1 | 2
   settlementHoldDays?: number
   settlementEligibleAt?: Date
+  settlementStatus?: 'on_hold' | 'available' | 'paid_out'
   rollingReserveRate?: number
   rollingReserveAmount?: number
   rollingReserveReleaseAt?: Date
+  rollingReserveStatus?: 'locked' | 'released'
   status: 'pending' | 'succeeded' | 'failed' | 'refunded'
   customerEmail?: string
   customerName?: string
@@ -155,6 +157,12 @@ const TransactionSchema = new Schema<ITransaction>(
     settlementEligibleAt: {
       type: Date,
     },
+    settlementStatus: {
+      type: String,
+      enum: ['on_hold', 'available', 'paid_out'],
+      default: 'on_hold',
+      index: true,
+    },
     rollingReserveRate: {
       type: Number,
       default: 10,
@@ -165,6 +173,12 @@ const TransactionSchema = new Schema<ITransaction>(
     },
     rollingReserveReleaseAt: {
       type: Date,
+    },
+    rollingReserveStatus: {
+      type: String,
+      enum: ['locked', 'released'],
+      default: 'locked',
+      index: true,
     },
     status: {
       type: String,
