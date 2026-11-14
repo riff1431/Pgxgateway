@@ -9,6 +9,7 @@ import {
   uploadAvatar,
   submitRegistration,
   getMerchantByEmail,
+  getMerchantTransactions,
 } from '../controllers/merchant.controller.js'
 import { protect } from '../middleware/auth.middleware.js'
 import { uploadDocs } from '../middleware/upload.middleware.js'
@@ -33,8 +34,9 @@ router.post('/submit', protect, submitApplication)
 router.get('/status', protect, getApplicationStatus)
 router.get('/offer', protect, getProcessingOffer)
 router.post('/offer/accept', protect, acceptProcessingOffer)
-router.post('/avatar', protect, uploadDocs.single('avatar'), uploadAvatar)
-router.patch('/avatar', protect, uploadAvatar)
+router.post('/avatar', uploadDocs.single('avatar'), uploadAvatar)
+router.patch('/avatar', uploadAvatar)
+router.get('/transactions', protect, getMerchantTransactions)
 
 // Backward-compatible fallback routes
 router.post('/register', submitRegistration)

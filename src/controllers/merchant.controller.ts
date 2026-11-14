@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { Merchant } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
+import { Transaction } from '../models/Transaction.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
 import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 import { uploadBufferToCloudinary } from '../config/cloudinary.js'
@@ -408,6 +409,62 @@ export async function getMerchantByEmail(req: Request, res: Response, next: Next
     res.status(200).json({
       success: true,
       data: merchant,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function getMerchantTransactions(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user?._id
+    if (!merchantId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' })
+    }
+
+    const merchant = await Merchant.findById(merchantId).select('refId legalName fullName')
+    if (!merchant || !merchant.refId) {
+      return res.status(404).json({ success: false, message: 'Merchant reference not found.' })
+    }
+
+    const transactions = await Transaction.find({ merchantRefId: merchant.refId })
+      .sort({ createdAt: -1 })
+      .limit(100)
+
+    let totalGross = 0
+    let totalNet = 0
+    let onHoldBalance = 0
+    let availableBalance = 0
+    let rollingReserveBalance = 0
+
+    transactions.forEach((t) => {
+      if (t.status === 'succeeded') {
+        totalGross += t.grossAmount || 0
+        totalNet += t.merchantNetAmount || 0
+
+        if (t.settlementStatus === 'on_hold') {
+          onHoldBalance += t.merchantNetAmount || 0
+        } else if (t.settlementStatus === 'available') {
+          availableBalance += t.merchantNetAmount || 0
+        }
+
+        if (t.rollingReserveStatus === 'locked') {
+          rollingReserveBalance += t.rollingReserveAmount || 0
+        }
+      }
+    })
+
+    return res.status(200).json({
+      success: true,
+      data: transactions,
+      metrics: {
+        totalGross: parseFloat(totalGross.toFixed(2)),
+        totalNet: parseFloat(totalNet.toFixed(2)),
+        onHoldBalance: parseFloat(onHoldBalance.toFixed(2)),
+        availableBalance: parseFloat(availableBalance.toFixed(2)),
+        rollingReserveBalance: parseFloat(rollingReserveBalance.toFixed(2)),
+        totalCount: transactions.length,
+      },
     })
   } catch (error) {
     next(error)
