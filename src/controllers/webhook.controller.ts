@@ -198,23 +198,55 @@ async function processSuccessfulCheckout(
   const currency = (session.currency || 'USD').toUpperCase()
 
   // --- Financial Calculation Engine (Integer-Cent Precision) ---
-  // 1. Dynamic Platform Fee for Super Admin
-  const platformFeeRate = resellerConfig.feeSettings?.basePlatformFee ?? 9.0
+  // Tier-aware wholesale rate, hold, and rolling reserve (ARXO Blueprint)
+  const isArxoReseller = resellerId === 'ARXO' || String(merchant.resellerId) === 'ARXO'
+  const merchantTier = merchant.offer?.tier === 2 ? 2 : 1
+  let platformFeeRate = resellerConfig.feeSettings?.basePlatformFee ?? 9.0
+  let holdDays = 14
+  let reserveRate = 10.0
+  let reserveDays = 60
+
+  if (isArxoReseller) {
+    if (merchantTier === 2) {
+      platformFeeRate = 12.0
+      holdDays = 30
+      reserveRate = 20.0
+      reserveDays = 90
+    } else {
+      platformFeeRate = 9.0
+      holdDays = 14
+      reserveRate = 10.0
+      reserveDays = 60
+    }
+  }
+
+  // Parse merchant's assigned rate (e.g. from offer.rate "15%")
+  let merchantConfiguredRate = resellerConfig.feeSettings?.merchantFeeRate || 12.0
+  if (merchant.offer?.rate) {
+    const parsedRate = parseFloat(String(merchant.offer.rate).replace(/[^0-9.]/g, ''))
+    if (!isNaN(parsedRate) && parsedRate >= platformFeeRate) {
+      merchantConfiguredRate = parsedRate
+    }
+  }
+
+  const resellerFeeRate = Math.max(platformFeeRate, merchantConfiguredRate)
   const platformFeeCents = Math.round(grossCents * (platformFeeRate / 100))
   const platformFeeAmount = platformFeeCents / 100
 
-  // 2. Reseller Configured Rate (must be >= basePlatformFee)
-  const resellerFeeRate = Math.max(platformFeeRate, resellerConfig.feeSettings?.merchantFeeRate || 12.0)
   const resellerFeeCents = Math.round(grossCents * (resellerFeeRate / 100))
   const resellerFeeAmount = resellerFeeCents / 100
 
-  // 3. Reseller Net Profit Spread ($12 - $9 = $3)
   const resellerProfitCents = Math.max(0, resellerFeeCents - platformFeeCents)
   const resellerProfitAmount = resellerProfitCents / 100
 
-  // 4. Sub-Merchant Net Balance ($100 - $12 = $88)
+  const reserveCents = Math.round(grossCents * (reserveRate / 100))
+  const reserveAmount = reserveCents / 100
+
   const merchantNetCents = Math.max(0, grossCents - resellerFeeCents)
   const merchantNetAmount = merchantNetCents / 100
+
+  const settlementEligibleAt = new Date(Date.now() + holdDays * 24 * 60 * 60 * 1000)
+  const rollingReserveReleaseAt = new Date(Date.now() + reserveDays * 24 * 60 * 60 * 1000)
 
   // Generate readable unique transaction ID
   const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
@@ -242,6 +274,12 @@ async function processSuccessfulCheckout(
     resellerProfitCents,
     merchantNetAmount,
     merchantNetCents,
+    tier: merchantTier,
+    settlementHoldDays: holdDays,
+    settlementEligibleAt,
+    rollingReserveRate: reserveRate,
+    rollingReserveAmount: reserveAmount,
+    rollingReserveReleaseAt,
     status: 'succeeded',
     customerEmail: session.customer_details?.email || undefined,
     customerName: session.customer_details?.name || undefined,
@@ -363,20 +401,54 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   const grossCents = Math.round(grossAmount * 100)
   const normCurrency = String(currency).toUpperCase()
 
-  // Dynamic fee calculation
-  const platformFeeRate = resellerConfig?.feeSettings?.basePlatformFee ?? 9.0
+  // Dynamic fee calculation (Tier-aware for ARXO)
+  const isArxoReseller = resellerId === 'ARXO' || String(merchant.resellerId) === 'ARXO'
+  const merchantTier = merchant.offer?.tier === 2 ? 2 : 1
+  let platformFeeRate = resellerConfig?.feeSettings?.basePlatformFee ?? 9.0
+  let holdDays = 14
+  let reserveRate = 10.0
+  let reserveDays = 60
+
+  if (isArxoReseller) {
+    if (merchantTier === 2) {
+      platformFeeRate = 12.0
+      holdDays = 30
+      reserveRate = 20.0
+      reserveDays = 90
+    } else {
+      platformFeeRate = 9.0
+      holdDays = 14
+      reserveRate = 10.0
+      reserveDays = 60
+    }
+  }
+
+  let merchantConfiguredRate = resellerConfig?.feeSettings?.merchantFeeRate || 12.0
+  if (merchant.offer?.rate) {
+    const parsedRate = parseFloat(String(merchant.offer.rate).replace(/[^0-9.]/g, ''))
+    if (!isNaN(parsedRate) && parsedRate >= platformFeeRate) {
+      merchantConfiguredRate = parsedRate
+    }
+  }
+
+  const resellerFeeRate = Math.max(platformFeeRate, merchantConfiguredRate)
   const platformFeeCents = Math.round(grossCents * (platformFeeRate / 100))
   const platformFeeAmount = platformFeeCents / 100
 
-  const resellerFeeRate = Math.max(platformFeeRate, resellerConfig?.feeSettings?.merchantFeeRate || 12.0)
   const resellerFeeCents = Math.round(grossCents * (resellerFeeRate / 100))
   const resellerFeeAmount = resellerFeeCents / 100
 
   const resellerProfitCents = Math.max(0, resellerFeeCents - platformFeeCents)
   const resellerProfitAmount = resellerProfitCents / 100
 
+  const reserveCents = Math.round(grossCents * (reserveRate / 100))
+  const reserveAmount = reserveCents / 100
+
   const merchantNetCents = Math.max(0, grossCents - resellerFeeCents)
   const merchantNetAmount = merchantNetCents / 100
+
+  const settlementEligibleAt = new Date(Date.now() + holdDays * 24 * 60 * 60 * 1000)
+  const rollingReserveReleaseAt = new Date(Date.now() + reserveDays * 24 * 60 * 60 * 1000)
 
   const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
   const transactionId = `TXN_ECOM_${Date.now().toString().slice(-4)}_${txnIdSuffix}`
@@ -401,6 +473,12 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     resellerProfitCents,
     merchantNetAmount,
     merchantNetCents,
+    tier: merchantTier,
+    settlementHoldDays: holdDays,
+    settlementEligibleAt,
+    rollingReserveRate: reserveRate,
+    rollingReserveAmount: reserveAmount,
+    rollingReserveReleaseAt,
     status: 'succeeded',
     customerEmail,
     customerName,

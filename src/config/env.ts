@@ -32,4 +32,7 @@ export const config = {
     secret: process.env.GATEWAY_BRIDGE_SECRET || 'pgx-digital-super-secret-gateway-bridge-key-2026',
     enabled: process.env.ENABLE_ECOM_BRIDGE !== 'false',
   },
+  resellerArxo: {
+    apiKey: process.env.ARXO_RESELLER_API_KEY || 'pgx_reseller_arxo_live_secret_key_2026',
+  },
 }

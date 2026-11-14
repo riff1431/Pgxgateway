@@ -21,6 +21,12 @@ export interface ITransaction extends Document {
   resellerProfitCents: number
   merchantNetAmount: number // Net owed to sub-merchant
   merchantNetCents: number
+  tier?: 1 | 2
+  settlementHoldDays?: number
+  settlementEligibleAt?: Date
+  rollingReserveRate?: number
+  rollingReserveAmount?: number
+  rollingReserveReleaseAt?: Date
   status: 'pending' | 'succeeded' | 'failed' | 'refunded'
   customerEmail?: string
   customerName?: string
@@ -136,6 +142,29 @@ const TransactionSchema = new Schema<ITransaction>(
       type: Number,
       required: true,
       default: 0,
+    },
+    tier: {
+      type: Number,
+      enum: [1, 2],
+      default: 1,
+    },
+    settlementHoldDays: {
+      type: Number,
+      default: 14,
+    },
+    settlementEligibleAt: {
+      type: Date,
+    },
+    rollingReserveRate: {
+      type: Number,
+      default: 10,
+    },
+    rollingReserveAmount: {
+      type: Number,
+      default: 0,
+    },
+    rollingReserveReleaseAt: {
+      type: Date,
     },
     status: {
       type: String,

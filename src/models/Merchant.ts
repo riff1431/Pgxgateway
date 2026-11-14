@@ -105,6 +105,8 @@ export interface IMerchant extends Document {
     isAvailable: boolean
     accepted?: boolean
     acceptedAt?: Date
+    tier?: 1 | 2
+    externalApplicationId?: string
   }
 
   // Monthly Recurring Maintenance Subscription
@@ -265,6 +267,8 @@ const MerchantSchema = new Schema<IMerchant>(
       isAvailable: { type: Boolean, default: false },
       accepted: { type: Boolean, default: false },
       acceptedAt: { type: Date },
+      tier: { type: Number, enum: [1, 2], default: 1 },
+      externalApplicationId: { type: String, trim: true, index: true, sparse: true },
     },
 
     // Monthly Recurring Maintenance Subscription
