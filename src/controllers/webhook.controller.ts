@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import crypto from 'crypto'
 import type Stripe from 'stripe'
+import { config } from '../config/env.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { SystemConfig } from '../models/SystemConfig.js'
 import { Merchant } from '../models/Merchant.js'
@@ -299,5 +300,171 @@ async function processSuccessfulCheckout(
     feeDeducted: transaction.resellerFeeAmount,
     status: transaction.status,
     createdAt: transaction.createdAt,
+  })
+}
+
+/**
+ * Handles verified server-to-server settlement webhooks from PGX Digital E-Commerce (pgxdigital.shop).
+ * Credits the merchant's MongoDB ledger and executes multi-tenant fee distributions.
+ */
+export async function handleGatewaySettlementWebhook(req: Request, res: Response): Promise<void> {
+  const secretHeader =
+    (req.headers['x-gateway-bridge-secret'] as string) ||
+    (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : '')
+
+  if (!secretHeader || secretHeader.trim() !== (config.ecomBridge?.secret || '').trim()) {
+    res.status(401).json({ error: 'Unauthorized: Invalid or missing gateway bridge secret' })
+    return
+  }
+
+  const {
+    stripeSessionId,
+    stripeEventId,
+    merchantRefId,
+    resellerId = 'admin_root',
+    orderId = '',
+    grossAmount,
+    currency = 'USD',
+    customerEmail,
+    customerName,
+    metadata = {},
+  } = req.body
+
+  if (!merchantRefId || typeof grossAmount !== 'number') {
+    res.status(400).json({ error: 'Missing required settlement parameters (merchantRefId, grossAmount)' })
+    return
+  }
+
+  // Idempotency check
+  const existingTxn = await Transaction.findOne({
+    $or: [{ stripeSessionId }, ...(stripeEventId ? [{ stripeEventId }] : [])],
+  })
+
+  if (existingTxn) {
+    console.log(`[Gateway Settlement] Duplicate event ${stripeSessionId} already processed.`)
+    res.status(200).json({ received: true, duplicate: true, transactionId: existingTxn.transactionId })
+    return
+  }
+
+  const merchant = await Merchant.findOne({ refId: merchantRefId.toUpperCase().trim() })
+  if (!merchant) {
+    console.warn(`[Gateway Settlement] Merchant with refId ${merchantRefId} not found in database.`)
+    res.status(404).json({ error: `Merchant ${merchantRefId} not found` })
+    return
+  }
+
+  let resellerConfig = await ResellerConfig.findOne({ resellerId })
+  if (!resellerConfig) {
+    resellerConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
+  }
+
+  const grossCents = Math.round(grossAmount * 100)
+  const normCurrency = String(currency).toUpperCase()
+
+  // Dynamic fee calculation
+  const platformFeeRate = resellerConfig?.feeSettings?.basePlatformFee ?? 9.0
+  const platformFeeCents = Math.round(grossCents * (platformFeeRate / 100))
+  const platformFeeAmount = platformFeeCents / 100
+
+  const resellerFeeRate = Math.max(platformFeeRate, resellerConfig?.feeSettings?.merchantFeeRate || 12.0)
+  const resellerFeeCents = Math.round(grossCents * (resellerFeeRate / 100))
+  const resellerFeeAmount = resellerFeeCents / 100
+
+  const resellerProfitCents = Math.max(0, resellerFeeCents - platformFeeCents)
+  const resellerProfitAmount = resellerProfitCents / 100
+
+  const merchantNetCents = Math.max(0, grossCents - resellerFeeCents)
+  const merchantNetAmount = merchantNetCents / 100
+
+  const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
+  const transactionId = `TXN_ECOM_${Date.now().toString().slice(-4)}_${txnIdSuffix}`
+
+  const transaction = await Transaction.create({
+    transactionId,
+    resellerId,
+    merchantId: merchant._id,
+    merchantRefId: merchant.refId,
+    stripeSessionId,
+    stripeEventId,
+    currency: normCurrency,
+    grossAmount,
+    grossCents,
+    platformFeeRate,
+    platformFeeAmount,
+    platformFeeCents,
+    resellerFeeRate,
+    resellerFeeAmount,
+    resellerFeeCents,
+    resellerProfitAmount,
+    resellerProfitCents,
+    merchantNetAmount,
+    merchantNetCents,
+    status: 'succeeded',
+    customerEmail,
+    customerName,
+    orderId,
+    metadata: {
+      ...metadata,
+      settlement_channel: 'pgx_digital_ecom',
+    },
+  })
+
+  // Update Merchant Balances
+  await Merchant.findByIdAndUpdate(merchant._id, {
+    $inc: {
+      'balance.grossVolume': grossAmount,
+      'balance.netBalance': merchantNetAmount,
+      'balance.totalFeesPaid': resellerFeeAmount,
+    },
+  })
+
+  // Update Reseller Balances
+  if (resellerConfig) {
+    await ResellerConfig.findByIdAndUpdate(resellerConfig._id, {
+      $inc: {
+        totalVolumeProcessed: grossAmount,
+        totalPlatformFeesEarned: platformFeeAmount,
+        totalResellerProfit: resellerProfitAmount,
+      },
+    })
+  }
+
+  console.log(
+    `[Gateway Settlement] Succeeded: ${transactionId} for merchant ${merchant.refId} | Gross: $${grossAmount} | Net: $${merchantNetAmount}`
+  )
+
+  const payload = {
+    transactionId: transaction.transactionId,
+    merchantRefId: transaction.merchantRefId,
+    merchantName: merchant.legalName || merchant.fullName,
+    grossAmount: transaction.grossAmount,
+    platformFeeAmount: transaction.platformFeeAmount,
+    resellerProfitAmount: transaction.resellerProfitAmount,
+    merchantNetAmount: transaction.merchantNetAmount,
+    currency: transaction.currency,
+    status: transaction.status,
+    customerEmail: transaction.customerEmail,
+    createdAt: transaction.createdAt,
+  }
+
+  // Real-time WebSocket Dispatches
+  emitToReseller(resellerId, WS_EVENTS.TRANSACTION_NEW, payload)
+  emitToAdmins(WS_EVENTS.PLATFORM_TRANSACTION_NEW, payload)
+  emitToMerchant(merchant._id.toString(), WS_EVENTS.MERCHANT_CREDIT, {
+    transactionId: transaction.transactionId,
+    grossAmount: transaction.grossAmount,
+    merchantNetAmount: transaction.merchantNetAmount,
+    feeDeducted: transaction.resellerFeeAmount,
+    status: transaction.status,
+    createdAt: transaction.createdAt,
+  })
+
+  res.status(200).json({
+    success: true,
+    transactionId,
+    grossAmount,
+    merchantNetAmount,
   })
 }

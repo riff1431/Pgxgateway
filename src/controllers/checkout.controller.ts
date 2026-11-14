@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import { config } from '../config/env.js'
 import { Merchant } from '../models/Merchant.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Transaction } from '../models/Transaction.js'
@@ -73,22 +74,7 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
       })
     }
 
-    // 2. Find Reseller Stripe Configuration
     const resellerId = merchant.resellerId || 'admin_root'
-    let resellerConfig = await ResellerConfig.findOne({ resellerId })
-
-    if (!resellerConfig || !resellerConfig.stripe?.secretKey) {
-      // Fallback check on admin_root
-      resellerConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
-    }
-
-    if (!resellerConfig || !resellerConfig.stripe?.secretKey) {
-      return res.status(503).json({
-        success: false,
-        message: 'Gateway is currently in setup mode. Stripe credentials have not yet been configured by the admin.',
-      })
-    }
-
     const clientOrigin = req.headers.origin || 'http://localhost:5173'
 
     const resolvedSuccessUrl =
@@ -96,7 +82,63 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
     const resolvedCancelUrl =
       cancelUrl || `${clientOrigin}/checkout?ref=${merchant.refId}&status=cancelled`
 
-    // 3. Initiate Stripe Session with Reseller's Account & Merchant Ref ID metadata
+    // 2. Primary Route: E-Commerce Payment Bridge (pgxdigital.shop)
+    if (config.ecomBridge?.enabled && config.ecomBridge?.url) {
+      try {
+        const bridgeEndpoint = `${config.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
+        console.log(`[Checkout] Routing payment through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
+
+        const bridgeRes = await fetch(bridgeEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-gateway-bridge-secret': config.ecomBridge.secret,
+          },
+          body: JSON.stringify({
+            merchantRefId: merchant.refId,
+            resellerId,
+            orderId: orderId || `ORD-${Date.now().toString().slice(-6)}`,
+            amount: numericAmount,
+            currency: currency.toUpperCase(),
+            customerEmail,
+            productName: productName || `${merchant.legalName || merchant.fullName} Digital License`,
+            successUrl: resolvedSuccessUrl,
+            cancelUrl: resolvedCancelUrl,
+          }),
+        })
+
+        if (bridgeRes.ok) {
+          const bridgeData = (await bridgeRes.json()) as { sessionId: string; checkoutUrl: string }
+          return res.status(200).json({
+            success: true,
+            sessionId: bridgeData.sessionId,
+            checkoutUrl: bridgeData.checkoutUrl,
+            mode: 'ecom_bridge',
+          })
+        } else {
+          const errText = await bridgeRes.text()
+          console.warn(`[Checkout] E-Commerce Bridge returned error: ${bridgeRes.status} ${errText}. Attempting local fallback if configured...`)
+        }
+      } catch (bridgeErr: any) {
+        console.error(`[Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}. Attempting local fallback...`)
+      }
+    }
+
+    // 3. Fallback: Local Reseller Stripe Configuration
+    let resellerConfig = await ResellerConfig.findOne({ resellerId })
+
+    if (!resellerConfig || !resellerConfig.stripe?.secretKey) {
+      resellerConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
+    }
+
+    if (!resellerConfig || !resellerConfig.stripe?.secretKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'Gateway payment processor is currently unavailable. Please verify E-Commerce Bridge or Stripe credentials.',
+      })
+    }
+
+    // 4. Initiate Direct Stripe Session
     const session = await createStripeCheckoutSession({
       secretKey: resellerConfig.stripe.secretKey,
       amount: numericAmount,

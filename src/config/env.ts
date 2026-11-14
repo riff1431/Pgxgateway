@@ -27,4 +27,9 @@ export const config = {
     password: process.env.ADMIN_PASSWORD || 'AdminSecurePass2026!',
     secretKey: process.env.ADMIN_SECRET_KEY || 'pgx_admin_secret_super_secure_key_2026',
   },
+  ecomBridge: {
+    url: process.env.ECOM_BRIDGE_URL || 'http://localhost:4000',
+    secret: process.env.GATEWAY_BRIDGE_SECRET || 'pgx-digital-super-secret-gateway-bridge-key-2026',
+    enabled: process.env.ENABLE_ECOM_BRIDGE !== 'false',
+  },
 }
