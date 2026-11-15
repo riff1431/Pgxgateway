@@ -313,6 +313,14 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
         accepted: offer.accepted !== undefined ? Boolean(offer.accepted) : (merchant.offer?.accepted || false),
         acceptedAt: merchant.offer?.acceptedAt,
       }
+
+      // Automatically sync pending crypto payment amount with the new setup fee offer
+      if (merchant.cryptoPayment && merchant.cryptoPayment.status === 'pending') {
+        const parsedFee = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
+        if (!isNaN(parsedFee) && parsedFee > 0) {
+          merchant.cryptoPayment.amount = parsedFee
+        }
+      }
     }
 
     await merchant.save()

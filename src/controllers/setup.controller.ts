@@ -768,7 +768,13 @@ export async function verifyCryptoPayment(req: AdminRequest, res: Response, next
     merchant.cryptoPayment.verifiedBy = req.admin?.email || 'super_admin'
     if (notes) merchant.cryptoPayment.notes = notes
 
-    const rawSetupFee = merchant.cryptoPayment.amount || config.setupFeePriceUSD || 450.0
+    let rawSetupFee = merchant.cryptoPayment.amount || config.setupFeePriceUSD || 450.0
+    if (merchant.offer?.setupFee) {
+      const parsedOfferFee = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
+      if (!isNaN(parsedOfferFee) && parsedOfferFee > 0) {
+        rawSetupFee = parsedOfferFee
+      }
+    }
     merchant.setupFeeAmount = rawSetupFee
     merchant.setupPaidAt = new Date()
     merchant.setupStatus = 'information_pending'
