@@ -105,6 +105,18 @@ export interface IMerchant extends Document {
     maxTestAmount?: number
   }
 
+  // Live Activation Request (from Reseller to Super Admin)
+  liveActivationRequest?: {
+    isRequested: boolean
+    requestedAt?: Date
+    requestedByResellerId?: string
+    notes?: string
+    status: 'none' | 'pending' | 'approved' | 'rejected'
+    reviewedAt?: Date
+    reviewedBy?: string
+    rejectionReason?: string
+  }
+
   // Processing Offer
   offer?: {
     rate: string
@@ -286,6 +298,23 @@ const MerchantSchema = new Schema<IMerchant>(
         index: true,
       },
       maxTestAmount: { type: Number, default: 100 },
+    },
+
+    // Live Activation Request (from Reseller to Super Admin)
+    liveActivationRequest: {
+      isRequested: { type: Boolean, default: false },
+      requestedAt: { type: Date },
+      requestedByResellerId: { type: String },
+      notes: { type: String, default: '' },
+      status: {
+        type: String,
+        enum: ['none', 'pending', 'approved', 'rejected'],
+        default: 'none',
+        index: true,
+      },
+      reviewedAt: { type: Date },
+      reviewedBy: { type: String },
+      rejectionReason: { type: String, default: '' },
     },
 
     // Processing Offer details

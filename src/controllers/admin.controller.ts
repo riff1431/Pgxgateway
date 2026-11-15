@@ -233,7 +233,7 @@ export async function getApplicationById(req: Request, res: Response, next: Next
 }
 
 // Underwriting Decision: Approve / Reject with Custom Offer
-export async function reviewApplication(req: Request, res: Response, next: NextFunction) {
+export async function reviewApplication(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
     const { status, offer, notes, approveMode, trialHours } = req.body
@@ -261,8 +261,11 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
       merchant.refId = `PGX_REF_${randomHex}`
     }
 
-    // Configure 24-Hour Trial vs Direct Live Mode on Approval
-    const mode = approveMode === 'live' ? 'live' : 'trial'
+    // Role-based Live Activation Gate: Sub-resellers can ONLY approve into 24h Trial
+    const isSuperAdmin = req.admin?.role === 'super_admin' || req.admin?.resellerId === 'admin_root'
+    const requestedMode = approveMode === 'live' ? 'live' : 'trial'
+    const mode = isSuperAdmin ? requestedMode : 'trial'
+
     if (status === 'approved') {
       if (mode === 'trial') {
         const duration = Number(trialHours) > 0 ? Number(trialHours) : 24
@@ -286,6 +289,12 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
           maxTestAmount: 100,
         }
         merchant.setupStatus = 'paid_setup'
+
+        if (merchant.liveActivationRequest && merchant.liveActivationRequest.status === 'pending') {
+          merchant.liveActivationRequest.status = 'approved'
+          merchant.liveActivationRequest.reviewedAt = new Date()
+          merchant.liveActivationRequest.reviewedBy = req.admin?.email || 'Platform Super Admin'
+        }
       }
     }
 
@@ -455,10 +464,18 @@ export async function extendMerchantTrial(req: AdminRequest, res: Response, next
   }
 }
 
-// Convert Merchant Directly to Live
+// Convert Merchant Directly to Live (Super Admin Authority Only)
 export async function convertMerchantToLive(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
+
+    const isSuperAdmin = req.admin?.role === 'super_admin' || req.admin?.resellerId === 'admin_root'
+    if (!isSuperAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Platform Super Administrator can authorize permanent Live account conversion. Please submit a Live Activation Request.',
+      })
+    }
 
     const merchant = await Merchant.findById(id)
     if (!merchant) {
@@ -475,6 +492,12 @@ export async function convertMerchantToLive(req: AdminRequest, res: Response, ne
       maxTestAmount: 100,
     }
     merchant.setupStatus = 'paid_setup'
+
+    if (merchant.liveActivationRequest && merchant.liveActivationRequest.status === 'pending') {
+      merchant.liveActivationRequest.status = 'approved'
+      merchant.liveActivationRequest.reviewedAt = new Date()
+      merchant.liveActivationRequest.reviewedBy = req.admin?.email || 'Platform Super Admin'
+    }
 
     await merchant.save()
 
@@ -497,6 +520,7 @@ export async function convertMerchantToLive(req: AdminRequest, res: Response, ne
       accountMode: merchant.accountMode,
       trial: merchant.trial,
       setupStatus: merchant.setupStatus,
+      liveActivationRequest: merchant.liveActivationRequest,
       refId: merchant.refId,
       timestamp: new Date().toISOString(),
     })
@@ -509,6 +533,111 @@ export async function convertMerchantToLive(req: AdminRequest, res: Response, ne
     return res.status(200).json({
       success: true,
       message: 'Merchant converted to Live processing successfully.',
+      data: merchant,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Request Live Activation (Sub-Reseller requests Super Admin sign-off)
+export async function requestMerchantLiveActivation(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+    const { notes } = req.body
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant application not found.' })
+    }
+
+    // Portfolio scoping: Resellers can only request for their own sub-merchants
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      if (merchant.resellerId && merchant.resellerId !== req.admin.resellerId) {
+        return res.status(403).json({ success: false, message: 'Unauthorized. Merchant belongs to another partner portfolio.' })
+      }
+    }
+
+    if (merchant.accountMode === 'live') {
+      return res.status(400).json({ success: false, message: 'Merchant is already active in permanent Live mode.' })
+    }
+
+    merchant.liveActivationRequest = {
+      isRequested: true,
+      requestedAt: new Date(),
+      requestedByResellerId: req.admin?.resellerId || merchant.resellerId || 'reseller',
+      notes: notes || 'Partner requested full live processing after trial verification.',
+      status: 'pending',
+    }
+
+    await merchant.save()
+
+    const notification = await Notification.create({
+      merchantId: merchant._id,
+      senderRole: 'system',
+      senderName: 'PGX Underwriting Team',
+      title: 'Live Activation Request Submitted! ⚡',
+      content: `A permanent live processing request for ${merchant.legalName || merchant.fullName} has been submitted for Super Admin review. Expected turnaround SLA: <24 hours.`,
+      type: 'compliance',
+      priority: 'high',
+      labels: ['Live Requested'],
+      isRead: false,
+    })
+
+    const unreadCount = await Notification.countDocuments({ merchantId: merchant._id, isRead: false })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.APPLICATION_UPDATED, {
+      applicationStatus: merchant.applicationStatus,
+      accountMode: merchant.accountMode,
+      trial: merchant.trial,
+      liveActivationRequest: merchant.liveActivationRequest,
+      refId: merchant.refId,
+      timestamp: new Date().toISOString(),
+    })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.NEW_NOTIFICATION, {
+      notification,
+      unreadCount,
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: 'Live activation request submitted successfully. Super Admin review turnaround is within 24 hours.',
+      data: merchant,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Super Admin rejects Live Activation Request with reason
+export async function rejectMerchantLiveActivation(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+    const { reason } = req.body
+
+    const isSuperAdmin = req.admin?.role === 'super_admin' || req.admin?.resellerId === 'admin_root'
+    if (!isSuperAdmin) {
+      return res.status(403).json({ success: false, message: 'Only Super Admin can decline live activation requests.' })
+    }
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    if (merchant.liveActivationRequest) {
+      merchant.liveActivationRequest.status = 'rejected'
+      merchant.liveActivationRequest.reviewedAt = new Date()
+      merchant.liveActivationRequest.reviewedBy = req.admin?.email || 'Platform Super Admin'
+      merchant.liveActivationRequest.rejectionReason = reason || 'Declined due to underwriting policy.'
+    }
+
+    await merchant.save()
+
+    return res.status(200).json({
+      success: true,
+      message: 'Live activation request declined.',
       data: merchant,
     })
   } catch (error) {
