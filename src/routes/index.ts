@@ -9,6 +9,7 @@ import webhookRoutes from './webhook.routes.js'
 import setupRoutes from './setup.routes.js'
 import invoiceRoutes from './invoice.routes.js'
 import resellerRoutes from './reseller.routes.js'
+import reviewRoutes from './review.routes.js'
 
 const apiRouter = Router()
 
@@ -24,5 +25,6 @@ apiRouter.use('/checkout', checkoutRoutes)
 apiRouter.use('/setup', setupRoutes)
 apiRouter.use('/invoices', invoiceRoutes)
 apiRouter.use('/reseller', resellerRoutes)
+apiRouter.use('/reviews', reviewRoutes)
 
 export default apiRouter
