@@ -27,10 +27,27 @@ async function getOrCreateSystemConfig(): Promise<ISystemConfig> {
         isConfigured: false,
         mode: 'test',
       },
+      cryptoWallets: {
+        btcAddress: '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz',
+        usdcEthAddress: '0x4520FBE6d418c1bAcE97A1E517e5Be2d78eb9598',
+      },
     })
-  } else if (!config.supportWhatsapp || config.supportWhatsapp === '+1 (800) 749-4283') {
-    config.supportWhatsapp = '+1 (437) 577-8785'
-    await config.save()
+  } else {
+    let changed = false
+    if (!config.supportWhatsapp || config.supportWhatsapp === '+1 (800) 749-4283') {
+      config.supportWhatsapp = '+1 (437) 577-8785'
+      changed = true
+    }
+    if (!config.cryptoWallets || !config.cryptoWallets.btcAddress || !config.cryptoWallets.usdcEthAddress) {
+      config.cryptoWallets = {
+        btcAddress: config.cryptoWallets?.btcAddress || '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz',
+        usdcEthAddress: config.cryptoWallets?.usdcEthAddress || '0x4520FBE6d418c1bAcE97A1E517e5Be2d78eb9598',
+      }
+      changed = true
+    }
+    if (changed) {
+      await config.save()
+    }
   }
   return config
 }
@@ -68,6 +85,10 @@ export async function getPlatformSettings(req: AdminRequest, res: Response, next
           isConfigured: Boolean(config.stripe?.isConfigured),
           mode: config.stripe?.mode || 'test',
         },
+        cryptoWallets: {
+          btcAddress: config.cryptoWallets?.btcAddress || '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz',
+          usdcEthAddress: config.cryptoWallets?.usdcEthAddress || '0x4520FBE6d418c1bAcE97A1E517e5Be2d78eb9598',
+        },
       },
     })
   } catch (error) {
@@ -100,6 +121,21 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
     if (supportPhone !== undefined) config.supportPhone = supportPhone.trim()
     if (supportTelegram !== undefined) config.supportTelegram = supportTelegram.trim()
     if (supportWhatsapp !== undefined) config.supportWhatsapp = supportWhatsapp.trim()
+
+    if (req.body.cryptoWallets) {
+      if (!config.cryptoWallets) {
+        config.cryptoWallets = {
+          btcAddress: '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz',
+          usdcEthAddress: '0x4520FBE6d418c1bAcE97A1E517e5Be2d78eb9598',
+        }
+      }
+      if (req.body.cryptoWallets.btcAddress !== undefined) {
+        config.cryptoWallets.btcAddress = req.body.cryptoWallets.btcAddress.trim()
+      }
+      if (req.body.cryptoWallets.usdcEthAddress !== undefined) {
+        config.cryptoWallets.usdcEthAddress = req.body.cryptoWallets.usdcEthAddress.trim()
+      }
+    }
 
     if (stripe) {
       if (!config.stripe) {
@@ -271,6 +307,11 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
           monthlyFee: parseMonthlyFee(merchant.offer?.monthlyFee) || 99.0,
           autoRenew: true,
         },
+        cryptoWallets: {
+          btcAddress: config.cryptoWallets?.btcAddress || '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz',
+          usdcEthAddress: config.cryptoWallets?.usdcEthAddress || '0x4520FBE6d418c1bAcE97A1E517e5Be2d78eb9598',
+        },
+        cryptoPayment: merchant.cryptoPayment || null,
       },
     })
   } catch (error) {
@@ -675,6 +716,176 @@ export async function updateAdminIntegrationStatus(req: AdminRequest, res: Respo
       success: true,
       message: 'Integration status updated successfully',
       merchant: updated,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// ----------------------------------------------------
+// 7. CRYPTO PAYMENT: Submit Proof & Verify (BTC / USDC)
+// ----------------------------------------------------
+export async function submitCryptoPayment(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchant = req.merchant
+    if (!merchant) {
+      return res.status(401).json({ success: false, message: 'Authentication required' })
+    }
+
+    const { currency, txHash, senderAddress, websiteDomain, gitRepoUrl } = req.body
+    if (!currency || !['BTC', 'USDC'].includes(currency)) {
+      return res.status(400).json({ success: false, message: 'Invalid currency. Must be BTC or USDC.' })
+    }
+    if (!txHash || typeof txHash !== 'string' || txHash.trim().length < 8) {
+      return res.status(400).json({ success: false, message: 'Valid blockchain Transaction Hash (TxID) is required.' })
+    }
+
+    if (websiteDomain) merchant.websiteDomain = websiteDomain.trim()
+    if (gitRepoUrl) merchant.gitRepoUrl = gitRepoUrl.trim()
+
+    const config = await getOrCreateSystemConfig()
+    let rawSetupFee = config.setupFeePriceUSD || 450.0
+    if (merchant.offer?.setupFee) {
+      const parsed = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
+      if (!isNaN(parsed) && parsed > 0) {
+        rawSetupFee = parsed
+      }
+    }
+
+    const network = currency === 'USDC' ? 'Ethereum (ERC-20)' : 'Bitcoin Network'
+
+    merchant.cryptoPayment = {
+      currency,
+      network,
+      txHash: txHash.trim(),
+      senderAddress: senderAddress ? String(senderAddress).trim() : '',
+      amount: rawSetupFee,
+      submittedAt: new Date(),
+      status: 'pending',
+    }
+    merchant.setupStatus = 'crypto_pending'
+    await merchant.save()
+
+    // Notify Super Admin
+    await Notification.create({
+      merchantId: merchant._id,
+      title: '🪙 Crypto Payment Proof Submitted',
+      content: `Merchant ${merchant.fullName} (${merchant.refId || 'N/A'}) submitted ${currency} transfer proof (${txHash.trim()}) for Setup Fee ($${rawSetupFee}). Verification required.`,
+      type: 'system',
+    })
+
+    emitToAdmins('admin_crypto_payment_received', {
+      merchantId: merchant._id,
+      merchantName: merchant.fullName,
+      refId: merchant.refId,
+      currency,
+      network,
+      txHash: txHash.trim(),
+      amount: rawSetupFee,
+      submittedAt: new Date(),
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: 'Crypto payment proof submitted successfully. Super Admin will verify on blockchain and activate your gateway integration.',
+      cryptoPayment: merchant.cryptoPayment,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function verifyCryptoPayment(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { merchantId } = req.params
+    const { action, notes, activateLive } = req.body // action: 'approve' | 'reject'
+
+    const merchant = await Merchant.findById(merchantId)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found' })
+    }
+
+    if (!merchant.cryptoPayment) {
+      return res.status(400).json({ success: false, message: 'No crypto payment submission found for this merchant' })
+    }
+
+    const config = await getOrCreateSystemConfig()
+
+    if (action === 'reject') {
+      merchant.cryptoPayment.status = 'rejected'
+      merchant.cryptoPayment.notes = notes || 'Transaction hash could not be verified on blockchain.'
+      merchant.setupStatus = 'pending_payment'
+      await merchant.save()
+
+      await Notification.create({
+        merchantId: merchant._id,
+        title: 'Crypto Payment Verification Declined',
+        content: `Your crypto payment proof could not be verified: ${merchant.cryptoPayment.notes}. Please check your TxID or contact support.`,
+        type: 'system',
+      })
+
+      return res.status(200).json({
+        success: true,
+        message: 'Crypto payment rejected',
+        merchant,
+      })
+    }
+
+    // Approve / Verify
+    merchant.cryptoPayment.status = 'verified'
+    merchant.cryptoPayment.verifiedAt = new Date()
+    merchant.cryptoPayment.verifiedBy = req.admin?.email || 'super_admin'
+    if (notes) merchant.cryptoPayment.notes = notes
+
+    const rawSetupFee = merchant.cryptoPayment.amount || config.setupFeePriceUSD || 450.0
+    merchant.setupFeeAmount = rawSetupFee
+    merchant.setupPaidAt = new Date()
+    merchant.setupStatus = 'information_pending'
+
+    if (activateLive) {
+      merchant.accountMode = 'live'
+      if (merchant.trial) {
+        merchant.trial.isActive = false
+        merchant.trial.status = 'converted'
+      }
+    }
+
+    // Accrue 20% affiliate commission if merchant belongs to a reseller
+    if (merchant.resellerId && merchant.resellerId !== 'admin_root') {
+      const commissionRate = config.affiliateCommissionRate || 20.0
+      const commissionEarned = (rawSetupFee * commissionRate) / 100.0
+      merchant.affiliateCommissionEarned = commissionEarned
+
+      await ResellerConfig.findOneAndUpdate(
+        { resellerId: merchant.resellerId },
+        {
+          $inc: {
+            prepaidBalance: commissionEarned,
+            totalResellerProfit: commissionEarned,
+          },
+        }
+      )
+    }
+
+    await merchant.save()
+
+    // Notify Merchant
+    await Notification.create({
+      merchantId: merchant._id,
+      title: '✅ Crypto Payment Verified & Confirmed',
+      content: `Your ${merchant.cryptoPayment.currency} setup payment ($${rawSetupFee}) has been verified on blockchain. Gateway integration is now unlocked!`,
+      type: 'system',
+    })
+
+    emitToMerchant(String(merchant._id), 'setup_status_updated', {
+      setupStatus: merchant.setupStatus,
+      accountMode: merchant.accountMode,
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: 'Crypto payment verified successfully',
+      merchant,
     })
   } catch (error) {
     next(error)

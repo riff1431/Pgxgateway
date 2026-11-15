@@ -58,6 +58,7 @@ export interface IMerchant extends Document {
     | 'completed'
     | 'delivered'
     | 'pending_payment'
+    | 'crypto_pending'
     | 'paid_setup'
     | 'collab_submitted'
     | 'in_progress'
@@ -143,6 +144,20 @@ export interface IMerchant extends Document {
     autoRenew: boolean
     failureCount?: number
     gracePeriodEnd?: Date
+  }
+
+  // Crypto Payment Transfer Submission
+  cryptoPayment?: {
+    currency: 'BTC' | 'USDC'
+    network: string
+    txHash: string
+    senderAddress?: string
+    amount: number
+    submittedAt: Date
+    status: 'pending' | 'verified' | 'rejected'
+    verifiedAt?: Date
+    verifiedBy?: string
+    notes?: string
   }
 
   createdAt: Date
@@ -348,6 +363,25 @@ const MerchantSchema = new Schema<IMerchant>(
       autoRenew: { type: Boolean, default: true },
       failureCount: { type: Number, default: 0 },
       gracePeriodEnd: { type: Date },
+    },
+
+    // Crypto Payment Transfer Details
+    cryptoPayment: {
+      currency: { type: String, enum: ['BTC', 'USDC'] },
+      network: { type: String, default: '' },
+      txHash: { type: String, trim: true, index: true },
+      senderAddress: { type: String, trim: true },
+      amount: { type: Number },
+      submittedAt: { type: Date },
+      status: {
+        type: String,
+        enum: ['pending', 'verified', 'rejected'],
+        default: 'pending',
+        index: true,
+      },
+      verifiedAt: { type: Date },
+      verifiedBy: { type: String },
+      notes: { type: String, default: '' },
     },
   },
   {
