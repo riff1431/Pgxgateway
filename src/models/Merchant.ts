@@ -94,6 +94,17 @@ export interface IMerchant extends Document {
   currentStep: number
   applicationStatus: 'draft' | 'under_review' | 'approved' | 'rejected'
 
+  // 24-Hour Trial & Live Account Mode
+  accountMode?: 'trial' | 'live' | 'suspended'
+  trial?: {
+    isActive: boolean
+    startedAt?: Date
+    expiresAt?: Date
+    trialDurationHours?: number
+    status: 'none' | 'active' | 'expired' | 'converted'
+    maxTestAmount?: number
+  }
+
   // Processing Offer
   offer?: {
     rate: string
@@ -254,6 +265,27 @@ const MerchantSchema = new Schema<IMerchant>(
       type: String,
       enum: ['draft', 'under_review', 'approved', 'rejected'],
       default: 'under_review',
+    },
+
+    // 24-Hour Trial & Live Account Mode
+    accountMode: {
+      type: String,
+      enum: ['trial', 'live', 'suspended'],
+      default: 'trial',
+      index: true,
+    },
+    trial: {
+      isActive: { type: Boolean, default: false },
+      startedAt: { type: Date },
+      expiresAt: { type: Date, index: true },
+      trialDurationHours: { type: Number, default: 24 },
+      status: {
+        type: String,
+        enum: ['none', 'active', 'expired', 'converted'],
+        default: 'none',
+        index: true,
+      },
+      maxTestAmount: { type: Number, default: 100 },
     },
 
     // Processing Offer details

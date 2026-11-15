@@ -321,6 +321,11 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       merchant.setupFeeAmount = rawSetupFee
       merchant.setupPaidAt = new Date()
       merchant.setupStatus = 'information_pending'
+      merchant.accountMode = 'live'
+      if (merchant.trial) {
+        merchant.trial.isActive = false
+        merchant.trial.status = 'converted'
+      }
       merchant.subscription = {
         status: 'active',
         monthlyFee: parseMonthlyFee(merchant.offer?.monthlyFee) || 99.0,

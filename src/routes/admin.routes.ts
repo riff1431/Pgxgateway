@@ -4,6 +4,8 @@ import {
   getApplications,
   getApplicationById,
   reviewApplication,
+  extendMerchantTrial,
+  convertMerchantToLive,
   deleteMerchantApplication,
   getAdminStats,
   getSystemConfig,
@@ -45,6 +47,8 @@ router.get('/stats', getAdminStats)
 router.get('/applications', getApplications)
 router.get('/applications/:id', getApplicationById)
 router.patch('/applications/:id/review', reviewApplication)
+router.post('/applications/:id/extend-trial', extendMerchantTrial)
+router.post('/applications/:id/convert-live', convertMerchantToLive)
 router.delete('/applications/:id', deleteMerchantApplication)
 
 // Multi-Tenant Reseller & Stripe Gateway Settings

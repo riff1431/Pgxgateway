@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import { AdminRequest } from '../middleware/admin.middleware.js'
 import { Request, Response, NextFunction } from 'express'
@@ -217,7 +218,7 @@ export async function getApplicationById(req: Request, res: Response, next: Next
 export async function reviewApplication(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
-    const { status, offer, notes } = req.body
+    const { status, offer, notes, approveMode, trialHours } = req.body
 
     if (!['approved', 'rejected', 'under_review'].includes(status)) {
       return res.status(400).json({
@@ -235,6 +236,40 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
     }
 
     merchant.applicationStatus = status
+
+    // Ensure unique refId is generated if missing
+    if (!merchant.refId) {
+      const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase()
+      merchant.refId = `PGX_REF_${randomHex}`
+    }
+
+    // Configure 24-Hour Trial vs Direct Live Mode on Approval
+    const mode = approveMode === 'live' ? 'live' : 'trial'
+    if (status === 'approved') {
+      if (mode === 'trial') {
+        const duration = Number(trialHours) > 0 ? Number(trialHours) : 24
+        merchant.accountMode = 'trial'
+        merchant.trial = {
+          isActive: true,
+          startedAt: new Date(),
+          expiresAt: new Date(Date.now() + duration * 3600 * 1000),
+          trialDurationHours: duration,
+          status: 'active',
+          maxTestAmount: 100,
+        }
+      } else {
+        merchant.accountMode = 'live'
+        merchant.trial = {
+          isActive: false,
+          startedAt: merchant.trial?.startedAt,
+          expiresAt: merchant.trial?.expiresAt,
+          trialDurationHours: merchant.trial?.trialDurationHours || 24,
+          status: 'converted',
+          maxTestAmount: 100,
+        }
+        merchant.setupStatus = 'paid_setup'
+      }
+    }
 
     let offerWasProvided = false
     if (offer && typeof offer === 'object') {
@@ -258,14 +293,22 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
     // Create In-App Notification for the Merchant
     let notifTitle = 'Application Status Updated'
     let notifContent = notes || `Your merchant application status is now ${status.toUpperCase()}.`
-    const labels = [status === 'approved' ? 'Approved' : status === 'rejected' ? 'Declined' : 'Underwriting']
+    const labels = [status === 'approved' ? (mode === 'trial' ? '24h Trial Active' : 'Live Approved') : status === 'rejected' ? 'Declined' : 'Underwriting']
 
     if (status === 'approved') {
-      notifTitle = 'Application Approved & Offer Live! 🎉'
-      notifContent =
-        notes ||
-        `Congratulations! Your merchant account for ${merchant.legalName || merchant.fullName} has been approved. Your custom processing rates (${merchant.offer?.rate || 'Tier 1'}) are available. Please accept to proceed.`
-      labels.push('Offer Active')
+      if (mode === 'trial') {
+        notifTitle = 'Application Approved & 24h Integration Trial Active! ⏳'
+        notifContent =
+          notes ||
+          `Congratulations! Your merchant account for ${merchant.legalName || merchant.fullName} has been approved with a 24-Hour Integration Sandbox. Your Merchant Ref ID is ${merchant.refId}. Test your checkout now from the 'API & Integration' tab!`
+        labels.push('Sandbox Live')
+      } else {
+        notifTitle = 'Application Fully Approved (Live Active)! 🎉'
+        notifContent =
+          notes ||
+          `Congratulations! Your merchant account for ${merchant.legalName || merchant.fullName} is fully active for live payment processing. Your Merchant Ref ID is ${merchant.refId}.`
+        labels.push('Offer Active')
+      }
     } else if (offerWasProvided && merchant.offer?.isAvailable) {
       notifTitle = 'Processing Offer Submitted! 📋'
       notifContent =
@@ -302,6 +345,9 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
       applicationStatus: merchant.applicationStatus,
       currentStep: merchant.currentStep,
       offer: merchant.offer,
+      accountMode: merchant.accountMode,
+      trial: merchant.trial,
+      refId: merchant.refId,
       timestamp: new Date().toISOString(),
     })
 
@@ -318,6 +364,133 @@ export async function reviewApplication(req: Request, res: Response, next: NextF
     res.status(200).json({
       success: true,
       message: `Merchant application ${status} successfully.`,
+      data: merchant,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Extend Merchant 24-Hour Trial (+24h or specified hours)
+export async function extendMerchantTrial(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+    const { hours = 24 } = req.body
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    const extensionHours = Number(hours) > 0 ? Number(hours) : 24
+    const now = Date.now()
+    const currentExpiry = merchant.trial?.expiresAt ? new Date(merchant.trial.expiresAt).getTime() : now
+    const baseTime = currentExpiry > now ? currentExpiry : now
+    const newExpiresAt = new Date(baseTime + extensionHours * 3600 * 1000)
+
+    merchant.accountMode = 'trial'
+    merchant.trial = {
+      isActive: true,
+      startedAt: merchant.trial?.startedAt || new Date(),
+      expiresAt: newExpiresAt,
+      trialDurationHours: (merchant.trial?.trialDurationHours || 0) + extensionHours,
+      status: 'active',
+      maxTestAmount: merchant.trial?.maxTestAmount || 100,
+    }
+
+    await merchant.save()
+
+    const notification = await Notification.create({
+      merchantId: merchant._id,
+      senderRole: 'system',
+      senderName: 'PGX Underwriting Team',
+      title: 'Integration Trial Extended! ⏳',
+      content: `Your integration testing sandbox has been extended by ${extensionHours} hours. You now have until ${newExpiresAt.toUTCString()} to test your hosted checkout.`,
+      type: 'compliance',
+      priority: 'high',
+      labels: ['Trial Extended'],
+      isRead: false,
+    })
+
+    const unreadCount = await Notification.countDocuments({ merchantId: merchant._id, isRead: false })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.APPLICATION_UPDATED, {
+      applicationStatus: merchant.applicationStatus,
+      accountMode: merchant.accountMode,
+      trial: merchant.trial,
+      refId: merchant.refId,
+      timestamp: new Date().toISOString(),
+    })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.NEW_NOTIFICATION, {
+      notification,
+      unreadCount,
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: `Trial extended by ${extensionHours} hours successfully.`,
+      data: merchant,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Convert Merchant Directly to Live
+export async function convertMerchantToLive(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    merchant.accountMode = 'live'
+    merchant.trial = {
+      isActive: false,
+      startedAt: merchant.trial?.startedAt,
+      expiresAt: merchant.trial?.expiresAt,
+      trialDurationHours: merchant.trial?.trialDurationHours || 24,
+      status: 'converted',
+      maxTestAmount: 100,
+    }
+    merchant.setupStatus = 'paid_setup'
+
+    await merchant.save()
+
+    const notification = await Notification.create({
+      merchantId: merchant._id,
+      senderRole: 'system',
+      senderName: 'PGX Underwriting Team',
+      title: 'Account Converted to Full Live! 🚀',
+      content: `Your merchant account for ${merchant.legalName || merchant.fullName} has been granted Full Live processing status with no volume limits.`,
+      type: 'compliance',
+      priority: 'high',
+      labels: ['Live Processing'],
+      isRead: false,
+    })
+
+    const unreadCount = await Notification.countDocuments({ merchantId: merchant._id, isRead: false })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.APPLICATION_UPDATED, {
+      applicationStatus: merchant.applicationStatus,
+      accountMode: merchant.accountMode,
+      trial: merchant.trial,
+      setupStatus: merchant.setupStatus,
+      refId: merchant.refId,
+      timestamp: new Date().toISOString(),
+    })
+
+    emitToMerchant(String(merchant._id), WS_EVENTS.NEW_NOTIFICATION, {
+      notification,
+      unreadCount,
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: 'Merchant converted to Live processing successfully.',
       data: merchant,
     })
   } catch (error) {

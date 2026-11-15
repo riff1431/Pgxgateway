@@ -91,6 +91,11 @@ async function processSetupFeeCheckout(session: Stripe.Checkout.Session, eventId
 
   const amountTotal = (session.amount_total || 0) / 100
   merchant.setupStatus = 'paid_setup'
+  merchant.accountMode = 'live'
+  if (merchant.trial) {
+    merchant.trial.isActive = false
+    merchant.trial.status = 'converted'
+  }
   merchant.setupFeeAmount = amountTotal
   merchant.setupPaidAt = new Date()
   merchant.setupStripeSessionId = session.id
