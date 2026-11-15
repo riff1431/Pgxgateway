@@ -223,6 +223,17 @@ export async function getApplicationById(req: Request, res: Response, next: Next
       })
     }
 
+    // Multi-tenant check: sub-reseller can only view their own merchants
+    const adminReq = req as AdminRequest
+    if (adminReq.admin?.role === 'admin' && adminReq.admin.resellerId && adminReq.admin.resellerId !== 'admin_root') {
+      if (merchant.resellerId !== adminReq.admin.resellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You do not have permission to view merchants outside your reseller portfolio.',
+        })
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: merchant,
@@ -251,6 +262,16 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
         success: false,
         message: 'Merchant application not found.',
       })
+    }
+
+    // Multi-tenant isolation: Sub-resellers can only review their own merchants
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      if (merchant.resellerId !== req.admin.resellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You do not have permission to review merchants outside your reseller portfolio.',
+        })
+      }
     }
 
     merchant.applicationStatus = status
@@ -666,6 +687,16 @@ export async function deleteMerchantApplication(req: AdminRequest, res: Response
       })
     }
 
+    // Multi-tenant isolation: Sub-resellers can only review their own merchants
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      if (merchant.resellerId !== req.admin.resellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You do not have permission to review merchants outside your reseller portfolio.',
+        })
+      }
+    }
+
     // Multi-tenant scoping: Resellers can only delete merchants belonging to their tenant
     if (req.admin?.role === 'admin' && merchant.resellerId && req.admin.resellerId) {
       if (merchant.resellerId !== req.admin.resellerId) {
@@ -835,6 +866,17 @@ export async function sendMessageToMerchant(req: Request, res: Response, next: N
       })
     }
 
+    // Multi-tenant check: sub-resellers can only message their own merchants
+    const adminReq = req as AdminRequest
+    if (adminReq.admin?.role === 'admin' && adminReq.admin.resellerId && adminReq.admin.resellerId !== 'admin_root') {
+      if (merchant.resellerId !== adminReq.admin.resellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You cannot message merchants outside your reseller portfolio.',
+        })
+      }
+    }
+
     const sanitizedLabels = Array.isArray(labels) && labels.length > 0 ? labels : ['Underwriting']
 
     const notification = await Notification.create({
@@ -888,6 +930,18 @@ export async function sendMessageToMerchant(req: Request, res: Response, next: N
 export async function getMerchantMessages(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
+
+    const adminReq = req as AdminRequest
+    if (adminReq.admin?.role === 'admin' && adminReq.admin.resellerId && adminReq.admin.resellerId !== 'admin_root') {
+      const merchant = await Merchant.findById(id).select('resellerId')
+      if (!merchant || merchant.resellerId !== adminReq.admin.resellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You cannot view messages for merchants outside your reseller portfolio.',
+        })
+      }
+    }
+
     const messages = await Notification.find({ merchantId: id }).sort({ createdAt: -1 })
 
     res.status(200).json({
@@ -904,6 +958,13 @@ export async function getAllMessages(req: Request, res: Response, next: NextFunc
   try {
     const { type, unreadOnly } = req.query
     const query: Record<string, unknown> = {}
+
+    const adminReq = req as AdminRequest
+    if (adminReq.admin?.role === 'admin' && adminReq.admin.resellerId && adminReq.admin.resellerId !== 'admin_root') {
+      const resellerMerchants = await Merchant.find({ resellerId: adminReq.admin.resellerId }).select('_id')
+      const merchantIds = resellerMerchants.map((m) => m._id)
+      query.merchantId = { $in: merchantIds }
+    }
 
     if (type && type !== 'all') {
       query.type = type
