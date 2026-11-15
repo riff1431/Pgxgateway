@@ -138,6 +138,7 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
             productName: productName || `${merchant.legalName || merchant.fullName} Digital License`,
             successUrl: resolvedSuccessUrl,
             cancelUrl: resolvedCancelUrl,
+            mode: merchant.accountMode === 'trial' ? 'test' : 'live',
           }),
         })
 
