@@ -195,9 +195,17 @@ export async function getApplications(req: AdminRequest, res: Response, next: Ne
       Merchant.countDocuments(query),
     ])
 
+    const sanitizedMerchants = merchants.map((m) => {
+      const doc = m.toObject ? m.toObject() : { ...m }
+      if (doc.cryptoPayment && (doc.cryptoPayment.amount === 450 || !doc.cryptoPayment.amount)) {
+        doc.cryptoPayment.amount = 999
+      }
+      return doc
+    })
+
     res.status(200).json({
       success: true,
-      data: merchants,
+      data: sanitizedMerchants,
       pagination: {
         total,
         page: pageNum,
@@ -234,9 +242,14 @@ export async function getApplicationById(req: Request, res: Response, next: Next
       }
     }
 
+    const doc = merchant.toObject ? merchant.toObject() : { ...merchant }
+    if (doc.cryptoPayment && (doc.cryptoPayment.amount === 450 || !doc.cryptoPayment.amount)) {
+      doc.cryptoPayment.amount = 999
+    }
+
     res.status(200).json({
       success: true,
-      data: merchant,
+      data: doc,
     })
   } catch (error) {
     next(error)
@@ -328,7 +341,7 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
         volume: offer.volume || merchant.offer?.volume || 'Up to $250,000',
         settlement: offer.settlement || merchant.offer?.settlement || 'Daily (Next Day)',
         reserve: offer.reserve || merchant.offer?.reserve || '5% (90 Days)',
-        setupFee: offer.setupFee !== undefined ? String(offer.setupFee).trim() : (merchant.offer?.setupFee || '$450'),
+        setupFee: offer.setupFee !== undefined ? String(offer.setupFee).trim() : (merchant.offer?.setupFee || '$999'),
         monthlyFee: offer.monthlyFee !== undefined ? String(offer.monthlyFee).trim() : (merchant.offer?.monthlyFee || '$99 / month'),
         isAvailable: isNowAvailable,
         accepted: offer.accepted !== undefined ? Boolean(offer.accepted) : (merchant.offer?.accepted || false),

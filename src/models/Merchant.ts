@@ -338,7 +338,7 @@ const MerchantSchema = new Schema<IMerchant>(
       volume: { type: String, default: '' },
       settlement: { type: String, default: '' },
       reserve: { type: String, default: '' },
-      setupFee: { type: String, default: '$450' },
+      setupFee: { type: String, default: '$999' },
       monthlyFee: { type: String, default: '$99 / month' },
       isAvailable: { type: Boolean, default: false },
       accepted: { type: Boolean, default: false },

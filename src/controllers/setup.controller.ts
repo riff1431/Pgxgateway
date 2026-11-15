@@ -16,8 +16,8 @@ async function getOrCreateSystemConfig(): Promise<ISystemConfig> {
   if (!config) {
     config = await SystemConfig.create({
       siteName: 'PGX Gateway',
-      setupFeePriceUSD: 450.0,
-      setupFeePresetAltUSD: 565.0,
+      setupFeePriceUSD: 999.0,
+      setupFeePresetAltUSD: 1499.0,
       officialGithubHandle: 'huipper-dev',
       affiliateCommissionRate: 20.0,
       supportWhatsapp: '+1 (437) 577-8785',
@@ -74,7 +74,7 @@ export async function getPlatformSettings(req: AdminRequest, res: Response, next
         supportPhone: config.supportPhone,
         supportTelegram: config.supportTelegram,
         supportWhatsapp: config.supportWhatsapp,
-        setupFeePriceUSD: config.setupFeePriceUSD ?? 450.0,
+        setupFeePriceUSD: config.setupFeePriceUSD ?? 999.0,
         setupFeePresetAltUSD: config.setupFeePresetAltUSD ?? 565.0,
         officialGithubHandle: config.officialGithubHandle || 'huipper-dev',
         affiliateCommissionRate: config.affiliateCommissionRate ?? 20.0,
@@ -267,7 +267,8 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
 
     const config = await getOrCreateSystemConfig()
 
-    let rawSetupFee = config.setupFeePriceUSD || 450.0
+    let rawSetupFee = config.setupFeePriceUSD || 999.0
+    if (rawSetupFee === 450) rawSetupFee = 999.0
     if (merchant.offer?.setupFee) {
       const parsed = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
       if (!isNaN(parsed) && parsed > 0) {
@@ -337,7 +338,8 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
     const successUrl = `${appOrigin}/dashboard?tab=integration&setup_payment=success&session_id={CHECKOUT_SESSION_ID}`
     const cancelUrl = `${appOrigin}/dashboard?tab=integration&setup_payment=cancelled`
 
-    let rawSetupFee = config.setupFeePriceUSD || 450.0
+    let rawSetupFee = config.setupFeePriceUSD || 999.0
+    if (rawSetupFee === 450) rawSetupFee = 999.0
     if (merchant.offer?.setupFee) {
       const parsed = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
       if (!isNaN(parsed) && parsed > 0) {
@@ -675,7 +677,8 @@ export async function submitCryptoPayment(req: AuthRequest, res: Response, next:
     if (gitRepoUrl) merchant.gitRepoUrl = gitRepoUrl.trim()
 
     const config = await getOrCreateSystemConfig()
-    let rawSetupFee = config.setupFeePriceUSD || 450.0
+    let rawSetupFee = config.setupFeePriceUSD || 999.0
+    if (rawSetupFee === 450) rawSetupFee = 999.0
     if (merchant.offer?.setupFee) {
       const parsed = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
       if (!isNaN(parsed) && parsed > 0) {
@@ -768,7 +771,9 @@ export async function verifyCryptoPayment(req: AdminRequest, res: Response, next
     merchant.cryptoPayment.verifiedBy = req.admin?.email || 'super_admin'
     if (notes) merchant.cryptoPayment.notes = notes
 
-    let rawSetupFee = merchant.cryptoPayment.amount || config.setupFeePriceUSD || 450.0
+    let rawSetupFee = (merchant.cryptoPayment.amount && merchant.cryptoPayment.amount !== 450)
+      ? merchant.cryptoPayment.amount
+      : (config.setupFeePriceUSD || 999.0)
     if (merchant.offer?.setupFee) {
       const parsedOfferFee = parseFloat(String(merchant.offer.setupFee).replace(/[^0-9.]/g, ''))
       if (!isNaN(parsedOfferFee) && parsedOfferFee > 0) {

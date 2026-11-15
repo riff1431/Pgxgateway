@@ -78,7 +78,7 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     },
     setupFeePriceUSD: {
       type: Number,
-      default: 450.0, // PRD v1.0 Section 01 default working example
+      default: 999.0,
       min: 0,
     },
     setupFeePresetAltUSD: {
