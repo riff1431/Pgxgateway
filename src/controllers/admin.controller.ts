@@ -147,9 +147,9 @@ export async function getApplications(req: AdminRequest, res: Response, next: Ne
 
     const query: Record<string, unknown> = {}
 
-    // Multi-tenant scoping: Resellers see only their transactions; Super Admin sees all (or filtered)
-    if (req.admin?.role === 'admin') {
-      query.resellerId = req.admin.resellerId || 'admin_root'
+    // Multi-tenant scoping: Sub-resellers see only their merchants; Root Admin ('admin_root') & Super Admin can view all or filter by reseller
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      query.resellerId = req.admin.resellerId
     } else if (req.query.resellerId && req.query.resellerId !== 'all') {
       query.resellerId = req.query.resellerId
     }
@@ -554,9 +554,9 @@ export async function getAdminStats(req: AdminRequest, res: Response, next: Next
   try {
     const scope: Record<string, unknown> = {}
 
-    // Multi-tenant scoping: Resellers see only their transactions/merchants; Super Admin sees all
-    if (req.admin?.role === 'admin') {
-      scope.resellerId = req.admin.resellerId || 'admin_root'
+    // Multi-tenant scoping: Sub-resellers see only their transactions/merchants; Root Admin & Super Admin see all or filtered
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      scope.resellerId = req.admin.resellerId
     } else if (req.query.resellerId && req.query.resellerId !== 'all') {
       scope.resellerId = req.query.resellerId
     }
@@ -918,8 +918,8 @@ export async function getAdminTransactions(req: AdminRequest, res: Response, nex
 
     const query: Record<string, unknown> = {}
 
-    if (req.admin?.role === 'admin') {
-      query.resellerId = req.admin.resellerId || 'admin_root'
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      query.resellerId = req.admin.resellerId
     } else if (req.query.resellerId && req.query.resellerId !== 'all') {
       query.resellerId = req.query.resellerId
     }
