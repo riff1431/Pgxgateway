@@ -145,28 +145,46 @@ export async function getApplications(req: AdminRequest, res: Response, next: Ne
   try {
     const { status, search, page = '1', limit = '20' } = req.query
 
-    const query: Record<string, unknown> = {}
+    const andConditions: Record<string, unknown>[] = []
 
     // Multi-tenant scoping: Sub-resellers see only their merchants; Root Admin ('admin_root') & Super Admin can view all or filter by reseller
     if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      query.resellerId = req.admin.resellerId
+      andConditions.push({ resellerId: req.admin.resellerId })
     } else if (req.query.resellerId && req.query.resellerId !== 'all') {
-      query.resellerId = req.query.resellerId
+      const targetReseller = String(req.query.resellerId).trim()
+      if (targetReseller.toLowerCase() === 'admin_root') {
+        andConditions.push({
+          $or: [
+            { resellerId: 'admin_root' },
+            { resellerId: { $exists: false } },
+            { resellerId: null },
+            { resellerId: '' },
+          ],
+        })
+      } else {
+        andConditions.push({
+          resellerId: new RegExp(`^${targetReseller}$`, 'i'),
+        })
+      }
     }
 
     if (status && status !== 'all') {
-      query.applicationStatus = status
+      andConditions.push({ applicationStatus: status })
     }
 
     if (search && typeof search === 'string') {
       const regex = new RegExp(search.trim(), 'i')
-      query.$or = [
-        { fullName: regex },
-        { businessEmail: regex },
-        { legalName: regex },
-        { phone: regex },
-      ]
+      andConditions.push({
+        $or: [
+          { fullName: regex },
+          { businessEmail: regex },
+          { legalName: regex },
+          { phone: regex },
+        ],
+      })
     }
+
+    const query = andConditions.length > 0 ? { $and: andConditions } : {}
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 20))
@@ -552,14 +570,30 @@ export async function deleteMerchantApplication(req: AdminRequest, res: Response
 // Admin Metrics & Stats — multi-tenant scoped for resellers
 export async function getAdminStats(req: AdminRequest, res: Response, next: NextFunction) {
   try {
-    const scope: Record<string, unknown> = {}
+    const andConditions: Record<string, unknown>[] = []
 
     // Multi-tenant scoping: Sub-resellers see only their transactions/merchants; Root Admin & Super Admin see all or filtered
     if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      scope.resellerId = req.admin.resellerId
+      andConditions.push({ resellerId: req.admin.resellerId })
     } else if (req.query.resellerId && req.query.resellerId !== 'all') {
-      scope.resellerId = req.query.resellerId
+      const targetReseller = String(req.query.resellerId).trim()
+      if (targetReseller.toLowerCase() === 'admin_root') {
+        andConditions.push({
+          $or: [
+            { resellerId: 'admin_root' },
+            { resellerId: { $exists: false } },
+            { resellerId: null },
+            { resellerId: '' },
+          ],
+        })
+      } else {
+        andConditions.push({
+          resellerId: new RegExp(`^${targetReseller}$`, 'i'),
+        })
+      }
     }
+
+    const scope = andConditions.length > 0 ? { $and: andConditions } : {}
 
     const [total, pending, approved, rejected] = await Promise.all([
       Merchant.countDocuments(scope),
@@ -916,32 +950,50 @@ export async function getAdminTransactions(req: AdminRequest, res: Response, nex
   try {
     const { status, search, refId, page = '1', limit = '25' } = req.query
 
-    const query: Record<string, unknown> = {}
+    const andConditions: Record<string, unknown>[] = []
 
     if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      query.resellerId = req.admin.resellerId
+      andConditions.push({ resellerId: req.admin.resellerId })
     } else if (req.query.resellerId && req.query.resellerId !== 'all') {
-      query.resellerId = req.query.resellerId
+      const targetReseller = String(req.query.resellerId).trim()
+      if (targetReseller.toLowerCase() === 'admin_root') {
+        andConditions.push({
+          $or: [
+            { resellerId: 'admin_root' },
+            { resellerId: { $exists: false } },
+            { resellerId: null },
+            { resellerId: '' },
+          ],
+        })
+      } else {
+        andConditions.push({
+          resellerId: new RegExp(`^${targetReseller}$`, 'i'),
+        })
+      }
     }
 
     if (status && status !== 'all') {
-      query.status = status
+      andConditions.push({ status })
     }
 
     if (refId && typeof refId === 'string') {
-      query.merchantRefId = refId.toUpperCase().trim()
+      andConditions.push({ merchantRefId: refId.toUpperCase().trim() })
     }
 
     if (search && typeof search === 'string') {
       const regex = new RegExp(search.trim(), 'i')
-      query.$or = [
-        { transactionId: regex },
-        { merchantRefId: regex },
-        { customerEmail: regex },
-        { customerName: regex },
-        { orderId: regex },
-      ]
+      andConditions.push({
+        $or: [
+          { transactionId: regex },
+          { merchantRefId: regex },
+          { customerEmail: regex },
+          { customerName: regex },
+          { orderId: regex },
+        ],
+      })
     }
+
+    const query = andConditions.length > 0 ? { $and: andConditions } : {}
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 25))
