@@ -154,46 +154,24 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
           })
         } else {
           const errText = await bridgeRes.text()
-          console.warn(`[Checkout] E-Commerce Bridge returned error: ${bridgeRes.status} ${errText}. Attempting local fallback if configured...`)
+          console.warn(`[Checkout] E-Commerce Bridge error: ${bridgeRes.status} ${errText}`)
+          return res.status(bridgeRes.status).json({
+            success: false,
+            message: `E-Commerce payment bridge error: ${errText || bridgeRes.statusText}`,
+          })
         }
       } catch (bridgeErr: any) {
-        console.error(`[Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}. Attempting local fallback...`)
+        console.error(`[Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}`)
+        return res.status(502).json({
+          success: false,
+          message: `Failed to connect to E-Commerce payment bridge: ${bridgeErr.message}`,
+        })
       }
     }
 
-    // 3. Fallback: Local Reseller Stripe Configuration
-    let resellerConfig = await ResellerConfig.findOne({ resellerId })
-
-    if (!resellerConfig || !resellerConfig.stripe?.secretKey) {
-      resellerConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
-    }
-
-    if (!resellerConfig || !resellerConfig.stripe?.secretKey) {
-      return res.status(503).json({
-        success: false,
-        message: 'Gateway payment processor is currently unavailable. Please verify E-Commerce Bridge or Stripe credentials.',
-      })
-    }
-
-    // 4. Initiate Direct Stripe Session
-    const session = await createStripeCheckoutSession({
-      secretKey: resellerConfig.stripe.secretKey,
-      amount: numericAmount,
-      currency,
-      productName: productName || `${merchant.legalName || merchant.fullName} Order`,
-      merchantRefId: merchant.refId!,
-      resellerId,
-      orderId,
-      customerEmail,
-      successUrl: resolvedSuccessUrl,
-      cancelUrl: resolvedCancelUrl,
-    })
-
-    return res.status(200).json({
-      success: true,
-      sessionId: session.id,
-      checkoutUrl: session.url,
-      publishableKey: resellerConfig.stripe.publishableKey,
+    return res.status(503).json({
+      success: false,
+      message: 'E-Commerce payment gateway bridge is currently offline or disabled. Please contact administration.',
     })
   } catch (error) {
     next(error)

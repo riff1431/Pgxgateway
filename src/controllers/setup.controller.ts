@@ -349,188 +349,68 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
     const stripeSurcharge = Math.round(rawSetupFee * 0.03 * 100) / 100
     const totalAmountWithSurcharge = Math.round((rawSetupFee + stripeSurcharge) * 100) / 100
 
-    // 1. Primary Route: E-Commerce Payment Bridge (pgxdigital.shop)
-    if (envConfig.ecomBridge?.enabled && envConfig.ecomBridge?.url) {
-      try {
-        const bridgeEndpoint = `${envConfig.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
-        console.log(`[Setup Checkout] Routing setup fee payment through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
-
-        const bridgeRes = await fetch(bridgeEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-gateway-bridge-secret': envConfig.ecomBridge.secret,
-          },
-          body: JSON.stringify({
-            merchantRefId: merchant.refId || String(merchant._id),
-            resellerId: merchant.resellerId || 'admin_root',
-            orderId: `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
-            amount: totalAmountWithSurcharge,
-            currency: 'USD',
-            customerEmail: merchant.businessEmail,
-            customerName: merchant.legalName || merchant.fullName,
-            productName: `PGX Enterprise Software License & Merchant Onboarding Kit`,
-            successUrl,
-            cancelUrl,
-            mode: config.stripe?.mode === 'live' ? 'live' : 'test',
-          }),
-        })
-
-        if (bridgeRes.ok) {
-          const bridgeData = (await bridgeRes.json()) as any
-          const sessionId = bridgeData.sessionId || bridgeData.data?.sessionId
-          const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
-          return res.status(200).json({
-            success: true,
-            checkoutUrl,
-            sessionId,
-            amount: totalAmountWithSurcharge,
-            baseAmount: rawSetupFee,
-            surcharge: stripeSurcharge,
-            mode: 'ecom_bridge',
-          })
-        } else {
-          const errText = await bridgeRes.text()
-          console.warn(`[Setup Checkout] E-Commerce Bridge returned error: ${bridgeRes.status} ${errText}. Attempting direct Stripe fallback...`)
-        }
-      } catch (bridgeErr: any) {
-        console.error(`[Setup Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}. Attempting direct Stripe fallback...`)
-      }
-    }
-
-    // 2. Fallback: Direct Platform Stripe Configuration
-    if (!config.stripe?.secretKey || !config.stripe?.isConfigured) {
+    // Route strictly and exclusively through E-Commerce Payment Bridge (pgxdigital.shop)
+    // Stripe lives strictly in the e-commerce store (pgx_gateway_ecom)
+    if (!envConfig.ecomBridge?.enabled || !envConfig.ecomBridge?.url) {
       return res.status(503).json({
         success: false,
-        message: 'Platform payment gateway is currently unavailable. Please verify E-Commerce Bridge or Super Admin Stripe credentials.',
+        message: 'E-Commerce payment gateway bridge is currently offline or disabled. Please contact administration.',
       })
     }
 
-    // Handle dummy/sample keys seamlessly for testing & QA simulation
-    if (config.stripe.secretKey.startsWith('sk_test_sample')) {
-      const simulatedSessionId = `cs_test_simulated_${Date.now()}`
-      merchant.setupStripeSessionId = simulatedSessionId
-      merchant.setupFeeAmount = rawSetupFee
-      merchant.setupPaidAt = new Date()
-      merchant.setupStatus = 'information_pending'
-      merchant.accountMode = 'live'
-      if (merchant.trial) {
-        merchant.trial.isActive = false
-        merchant.trial.status = 'converted'
-      }
-      merchant.subscription = {
-        status: 'active',
-        monthlyFee: parseMonthlyFee(merchant.offer?.monthlyFee) || 99.0,
-        nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        lastBilledDate: new Date(),
-        autoRenew: true,
-        failureCount: 0,
-      }
-
-      // Accrue 20% affiliate commission to reseller
-      const commissionRate = config.affiliateCommissionRate || 20.0
-      const commissionEarned = (rawSetupFee * commissionRate) / 100.0
-      merchant.affiliateCommissionEarned = commissionEarned
-      await merchant.save()
-
-      if (merchant.resellerId) {
-        await ResellerConfig.findOneAndUpdate(
-          { resellerId: merchant.resellerId },
-          {
-            $inc: {
-              prepaidBalance: commissionEarned,
-              totalResellerProfit: commissionEarned,
-            },
-          }
-        )
-      }
-
-      return res.status(200).json({
-        success: true,
-        checkoutUrl: `${appOrigin}/dashboard?tab=integration&setup_payment=success&simulated=true`,
-        sessionId: simulatedSessionId,
-        amount: totalAmountWithSurcharge,
-        baseAmount: rawSetupFee,
-        surcharge: stripeSurcharge,
-      })
-    }
-
-    // Tokenize card for off_session auto-renewal by linking a persistent Stripe Customer
-    let customerId: string | undefined = merchant.subscription?.stripeCustomerId
     try {
-      if (!customerId) {
-        const stripeCustomer = await getOrCreateStripeCustomer({
-          secretKey: config.stripe.secretKey,
-          email: merchant.businessEmail,
-          name: merchant.legalName || merchant.fullName,
+      const bridgeEndpoint = `${envConfig.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
+      console.log(`[Setup Checkout] Routing setup fee payment strictly through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
+
+      const bridgeRes = await fetch(bridgeEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gateway-bridge-secret': envConfig.ecomBridge.secret,
+        },
+        body: JSON.stringify({
           merchantRefId: merchant.refId || String(merchant._id),
-          metadata: {
-            merchantId: String(merchant._id),
-            resellerId: merchant.resellerId || 'admin_root',
-          },
+          resellerId: merchant.resellerId || 'admin_root',
+          orderId: `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
+          amount: totalAmountWithSurcharge,
+          currency: 'USD',
+          customerEmail: merchant.businessEmail,
+          customerName: merchant.legalName || merchant.fullName,
+          productName: `PGX Enterprise Software License & Merchant Onboarding Kit`,
+          successUrl,
+          cancelUrl,
+          mode: config.stripe?.mode === 'live' ? 'live' : 'test',
+        }),
+      })
+
+      if (bridgeRes.ok) {
+        const bridgeData = (await bridgeRes.json()) as any
+        const sessionId = bridgeData.sessionId || bridgeData.data?.sessionId
+        const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
+        return res.status(200).json({
+          success: true,
+          checkoutUrl,
+          sessionId,
+          amount: totalAmountWithSurcharge,
+          baseAmount: rawSetupFee,
+          surcharge: stripeSurcharge,
+          mode: 'ecom_bridge',
         })
-        customerId = stripeCustomer.id
-        merchant.subscription = {
-          ...(merchant.subscription || { autoRenew: true }),
-          stripeCustomerId: customerId,
-          monthlyFee: parseMonthlyFee(merchant.offer?.monthlyFee) || 99.0,
-          status: merchant.subscription?.status || 'none',
-          autoRenew: true,
-        }
+      } else {
+        const errText = await bridgeRes.text()
+        console.warn(`[Setup Checkout] E-Commerce Bridge error: ${bridgeRes.status} ${errText}`)
+        return res.status(bridgeRes.status).json({
+          success: false,
+          message: `E-Commerce payment bridge error: ${errText || bridgeRes.statusText}`,
+        })
       }
-    } catch (custErr) {
-      console.warn('[Setup Checkout] Warning fetching/creating Stripe customer:', custErr)
+    } catch (bridgeErr: any) {
+      console.error(`[Setup Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}`)
+      return res.status(502).json({
+        success: false,
+        message: `Failed to connect to E-Commerce payment bridge: ${bridgeErr.message}`,
+      })
     }
-
-    const session = await createStripeCheckoutSession({
-      secretKey: config.stripe.secretKey,
-      amount: totalAmountWithSurcharge,
-      currency: 'usd',
-      productName: `Setup & Integration`,
-      merchantRefId: merchant.refId || String(merchant._id),
-      resellerId: merchant.resellerId || 'admin_root',
-      customerId,
-      customerEmail: merchant.businessEmail,
-      setupFutureUsage: 'off_session',
-      orderId: `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
-      successUrl,
-      cancelUrl,
-      lineItems: [
-        {
-          name: 'Setup & Integration',
-          description: `Account Activation & Dedicated Underwriting Desk for ${merchant.legalName || merchant.fullName}`,
-          amount: rawSetupFee,
-          quantity: 1,
-        },
-        {
-          name: 'Stripe Card Processing Surcharge (3%)',
-          description: 'Standard 3% credit/debit card payment processing surcharge',
-          amount: stripeSurcharge,
-          quantity: 1,
-        },
-      ],
-      metadata: {
-        type: 'setup_fee',
-        merchantId: merchant._id.toString(),
-        resellerId: merchant.resellerId || 'admin_root',
-        baseFee: String(rawSetupFee),
-        stripeSurcharge: String(stripeSurcharge),
-        customerId: customerId || '',
-      },
-    })
-
-    merchant.setupStripeSessionId = session.id
-    merchant.setupFeeAmount = rawSetupFee
-    await merchant.save()
-
-    return res.status(200).json({
-      success: true,
-      checkoutUrl: session.url,
-      sessionId: session.id,
-      amount: totalAmountWithSurcharge,
-      baseAmount: rawSetupFee,
-      surcharge: stripeSurcharge,
-    })
   } catch (error) {
     next(error)
   }
