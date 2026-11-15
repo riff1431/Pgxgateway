@@ -311,7 +311,7 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
         monthlyFee: offer.monthlyFee !== undefined ? String(offer.monthlyFee).trim() : (merchant.offer?.monthlyFee || '$99 / month'),
         isAvailable: isNowAvailable,
         accepted: offer.accepted !== undefined ? Boolean(offer.accepted) : (merchant.offer?.accepted || false),
-        acceptedAt: merchant.offer?.acceptedAt,
+        acceptedAt: merchant.offer?.acceptedAt || ((offer.accepted || merchant.offer?.accepted) ? new Date() : undefined),
       }
 
       // Automatically sync pending crypto payment amount with the new setup fee offer
