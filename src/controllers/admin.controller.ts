@@ -968,14 +968,59 @@ export async function getAdminTransactions(req: AdminRequest, res: Response, nex
 }
 
 // Super Admin Global Revenue & Platform Analytics
-export async function getSuperAdminAnalytics(_req: Request, res: Response, next: NextFunction) {
+export async function getSuperAdminAnalytics(req: Request, res: Response, next: NextFunction) {
   try {
+    const period = ((req.query.period as string) || 'all').toLowerCase()
+    let startDate: Date | null = null
+    let endDate: Date | null = null
+
+    const now = new Date()
+
+    if (period === 'today') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
+      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    } else if (period === 'yesterday') {
+      const yesterday = new Date(now)
+      yesterday.setDate(yesterday.getDate() - 1)
+      startDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0)
+      endDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999)
+    } else if (period === 'week' || period === 'this_week') {
+      const day = now.getDay()
+      const diffToMonday = (day === 0 ? -6 : 1) - day
+      startDate = new Date(now)
+      startDate.setDate(now.getDate() + diffToMonday)
+      startDate.setHours(0, 0, 0, 0)
+      endDate = new Date()
+    } else if (period === 'month' || period === 'this_month') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)
+      endDate = new Date()
+    } else if (period === 'ytd') {
+      startDate = new Date(now.getFullYear(), 0, 1, 0, 0, 0)
+      endDate = new Date()
+    }
+
+    const txnMatch: Record<string, unknown> = { status: 'succeeded' }
+    if (startDate) {
+      txnMatch.createdAt = {
+        $gte: startDate,
+        ...(endDate ? { $lte: endDate } : {}),
+      }
+    }
+
+    const merchantFilter: Record<string, unknown> = { applicationStatus: 'approved' }
+    if (startDate) {
+      merchantFilter.createdAt = {
+        $gte: startDate,
+        ...(endDate ? { $lte: endDate } : {}),
+      }
+    }
+
     const [totalMerchants, approvedMerchants, resellers, txnAgg, approvedList] = await Promise.all([
       Merchant.countDocuments(),
       Merchant.countDocuments({ applicationStatus: 'approved' }),
       ResellerConfig.find().select('resellerId stripe.mode stripe.isConfigured feeSettings totalVolumeProcessed totalPlatformFeesEarned totalResellerProfit updatedAt'),
       Transaction.aggregate([
-        { $match: { status: 'succeeded' } },
+        { $match: txnMatch },
         {
           $group: {
             _id: null,
@@ -987,7 +1032,7 @@ export async function getSuperAdminAnalytics(_req: Request, res: Response, next:
           },
         },
       ]),
-      Merchant.find({ applicationStatus: 'approved' }).select('setupFeeAmount offer subscription tier'),
+      Merchant.find(period === 'all' || period === 'ytd' ? { applicationStatus: 'approved' } : merchantFilter).select('setupFeeAmount offer subscription tier'),
     ])
 
     const agg = txnAgg[0] || {
@@ -1023,7 +1068,7 @@ export async function getSuperAdminAnalytics(_req: Request, res: Response, next:
       totalMonthlyRecurring += mFee
     }
 
-    const totalPlatformRevenue = Number((agg.totalPlatformFees + totalSetupFees).toFixed(2))
+    const totalPlatformRevenue = Number((agg.totalPlatformFees + totalSetupFees + totalMonthlyRecurring).toFixed(2))
 
     res.status(200).json({
       success: true,
@@ -1039,6 +1084,7 @@ export async function getSuperAdminAnalytics(_req: Request, res: Response, next:
         totalSetupFees: Number(totalSetupFees.toFixed(2)),
         totalMonthlyRecurring: Number(totalMonthlyRecurring.toFixed(2)),
         totalPlatformRevenue,
+        period,
         resellers,
       },
     })
