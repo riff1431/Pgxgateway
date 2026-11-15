@@ -9,6 +9,7 @@ import { parseMonthlyFee } from '../services/subscription.service.js'
 import { emitToAdmins, emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
 import { AdminRequest } from '../middleware/admin.middleware.js'
+import { config as envConfig } from '../config/env.js'
 
 async function getOrCreateSystemConfig(): Promise<ISystemConfig> {
   let config = await SystemConfig.findOne()
@@ -429,6 +430,55 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       }
     } catch (custErr) {
       console.warn('[Setup Checkout] Warning fetching/creating Stripe customer:', custErr)
+    }
+
+    // Primary Route: E-Commerce Payment Bridge (pgxdigital.shop)
+    if (envConfig.ecomBridge?.enabled && envConfig.ecomBridge?.url) {
+      try {
+        const bridgeEndpoint = `${envConfig.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
+        console.log(`[Setup Checkout] Routing setup fee payment through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
+
+        const bridgeRes = await fetch(bridgeEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-gateway-bridge-secret': envConfig.ecomBridge.secret,
+          },
+          body: JSON.stringify({
+            merchantRefId: merchant.refId || String(merchant._id),
+            resellerId: merchant.resellerId || 'admin_root',
+            orderId: `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
+            amount: totalAmountWithSurcharge,
+            currency: 'USD',
+            customerEmail: merchant.businessEmail,
+            customerName: merchant.legalName || merchant.fullName,
+            productName: `PGX Enterprise Software License & Merchant Onboarding Kit`,
+            successUrl,
+            cancelUrl,
+            mode: config.stripe?.mode === 'live' ? 'live' : 'test',
+          }),
+        })
+
+        if (bridgeRes.ok) {
+          const bridgeData = (await bridgeRes.json()) as any
+          const sessionId = bridgeData.sessionId || bridgeData.data?.sessionId
+          const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
+          return res.status(200).json({
+            success: true,
+            checkoutUrl,
+            sessionId,
+            amount: totalAmountWithSurcharge,
+            baseAmount: rawSetupFee,
+            surcharge: stripeSurcharge,
+            mode: 'ecom_bridge',
+          })
+        } else {
+          const errText = await bridgeRes.text()
+          console.warn(`[Setup Checkout] E-Commerce Bridge returned error: ${bridgeRes.status} ${errText}. Attempting direct Stripe fallback...`)
+        }
+      } catch (bridgeErr: any) {
+        console.error(`[Setup Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}. Attempting direct Stripe fallback...`)
+      }
     }
 
     const session = await createStripeCheckoutSession({

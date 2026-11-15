@@ -400,13 +400,103 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     return
   }
 
+  const normCurrency = String(currency).toUpperCase()
+
+  // Check if this settlement is a Setup Fee payment through the E-Commerce Bridge
+  const isSetupFee = (orderId && String(orderId).startsWith('SETUP-')) || metadata?.type === 'setup_fee'
+  if (isSetupFee) {
+    console.log(`[Gateway Settlement] Processing Setup Fee via bridge for merchant ${merchant.fullName} (${merchant.refId})`)
+
+    merchant.setupStatus = 'information_pending'
+    merchant.accountMode = 'live'
+    if (merchant.trial) {
+      merchant.trial.isActive = false
+      merchant.trial.status = 'converted'
+    }
+    merchant.setupFeeAmount = grossAmount
+    merchant.setupPaidAt = new Date()
+    merchant.setupStripeSessionId = stripeSessionId
+
+    // 30-Day Recurring Maintenance Subscription
+    let monthlyFee = 99.0
+    if (merchant.offer?.monthlyFee) {
+      const parsed = parseFloat(String(merchant.offer.monthlyFee).replace(/[^0-9.]/g, ''))
+      if (!isNaN(parsed) && parsed > 0) monthlyFee = parsed
+    }
+    merchant.subscription = {
+      status: 'active',
+      monthlyFee,
+      nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      lastBilledDate: new Date(),
+      autoRenew: true,
+      failureCount: 0,
+    }
+
+    // Accrue 20% affiliate commission to reseller
+    if (merchant.resellerId && merchant.resellerId !== 'admin_root') {
+      const sysConfig = await SystemConfig.findOne()
+      const rate = sysConfig?.affiliateCommissionRate ?? 20.0
+      const commission = Math.round(((grossAmount * rate) / 100) * 100) / 100
+      merchant.affiliateCommissionEarned = commission
+
+      await ResellerConfig.findOneAndUpdate(
+        { resellerId: merchant.resellerId },
+        { $inc: { prepaidBalance: commission, totalResellerProfit: commission } }
+      )
+    }
+
+    await merchant.save()
+
+    // Transaction log
+    const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
+    const setupTxn = await Transaction.create({
+      transactionId: `TXN_SETUP_${Date.now().toString().slice(-4)}_${txnIdSuffix}`,
+      resellerId: merchant.resellerId || 'admin_root',
+      merchantId: merchant._id,
+      merchantRefId: merchant.refId || String(merchant._id),
+      stripeSessionId,
+      stripeEventId,
+      currency: normCurrency,
+      grossAmount,
+      platformFeeAmount: grossAmount,
+      resellerSpreadAmount: merchant.affiliateCommissionEarned || 0,
+      merchantNetAmount: 0,
+      status: 'succeeded',
+      customerEmail: customerEmail || merchant.businessEmail,
+      orderId,
+      description: 'E-Commerce Bridge Setup & Integration License',
+    })
+
+    // Notifications
+    await Notification.create({
+      merchantId: merchant._id,
+      title: 'Setup Fee Paid via E-Commerce Bridge!',
+      content: `Setup payment of $${grossAmount} confirmed via PGX Digital. Account is now live.`,
+      type: 'system',
+    })
+
+    emitToMerchant(String(merchant._id), 'setup_status_updated', {
+      setupStatus: merchant.setupStatus,
+      accountMode: merchant.accountMode,
+    })
+
+    emitToAdmins(WS_EVENTS.PAYMENT_RECEIVED, {
+      merchantId: merchant._id,
+      fullName: merchant.fullName,
+      amount: grossAmount,
+      type: 'setup_fee',
+    })
+
+    res.status(200).json({ received: true, setupFeeProcessed: true, transactionId: setupTxn.transactionId })
+    return
+  }
+
   let resellerConfig = await ResellerConfig.findOne({ resellerId })
   if (!resellerConfig) {
     resellerConfig = await ResellerConfig.findOne({ resellerId: 'admin_root' })
   }
 
   const grossCents = Math.round(grossAmount * 100)
-  const normCurrency = String(currency).toUpperCase()
 
   // Dynamic fee calculation (Tier-aware for ARXO)
   const isArxoReseller = resellerId === 'ARXO' || String(merchant.resellerId) === 'ARXO'
