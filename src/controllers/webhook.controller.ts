@@ -213,8 +213,8 @@ async function processSuccessfulCheckout(
 
   if (isArxoReseller) {
     if (merchantTier === 2) {
-      platformFeeRate = 12.0
-      holdDays = 30
+      platformFeeRate = 15.0
+      holdDays = 45
       reserveRate = 20.0
       reserveDays = 90
     } else {
@@ -418,8 +418,8 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
 
   if (isArxoReseller) {
     if (merchantTier === 2) {
-      platformFeeRate = 12.0
-      holdDays = 30
+      platformFeeRate = 15.0
+      holdDays = 45
       reserveRate = 20.0
       reserveDays = 90
     } else {

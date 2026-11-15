@@ -36,14 +36,22 @@ export const ARXO_TIER_TERMS = {
     settlementHoldDays: 14,
     rollingReservePercent: 10.0,
     rollingReserveDays: 60,
+    setupFee: '$1,499',
+    setupFeeNum: 1499,
+    monthlyMaintenanceFee: '$499 / mo',
+    monthlyMaintenanceFeeNum: 499,
   },
   2: {
     tier: 2,
     name: 'Documentation Exception',
-    wholesaleFee: 12.0,
-    settlementHoldDays: 30,
+    wholesaleFee: 15.0,
+    settlementHoldDays: 45,
     rollingReservePercent: 20.0,
     rollingReserveDays: 90,
+    setupFee: '$2,500',
+    setupFeeNum: 2500,
+    monthlyMaintenanceFee: '$499 / mo',
+    monthlyMaintenanceFeeNum: 499,
   },
 } as const
 
@@ -112,6 +120,8 @@ export async function onboardArxoMerchant(req: Request, res: Response, next: Nex
         volume: 'Standard ARXO Volume',
         settlement: `${tierConfig.settlementHoldDays} Days`,
         reserve: `${tierConfig.rollingReservePercent}% for ${tierConfig.rollingReserveDays} Days`,
+        setupFee: tierConfig.setupFee,
+        monthlyFee: tierConfig.monthlyMaintenanceFee,
         tier: selectedTierNum,
         externalApplicationId: applicationId || merchant.offer?.externalApplicationId,
         isAvailable: true,
@@ -137,6 +147,8 @@ export async function onboardArxoMerchant(req: Request, res: Response, next: Nex
           settlementHoldDays: tierConfig.settlementHoldDays,
           rollingReservePercent: tierConfig.rollingReservePercent,
           rollingReserveDays: tierConfig.rollingReserveDays,
+          setupFee: tierConfig.setupFee,
+          monthlyMaintenanceFee: tierConfig.monthlyMaintenanceFee,
         },
       })
     }
@@ -161,8 +173,8 @@ export async function onboardArxoMerchant(req: Request, res: Response, next: Nex
         volume: 'Standard ARXO Processing',
         settlement: `${tierConfig.settlementHoldDays} Days`,
         reserve: `${tierConfig.rollingReservePercent}% for ${tierConfig.rollingReserveDays} Days`,
-        setupFee: '$0',
-        monthlyFee: '$0',
+        setupFee: tierConfig.setupFee,
+        monthlyFee: tierConfig.monthlyMaintenanceFee,
         tier: selectedTierNum,
         externalApplicationId: applicationId || '',
         isAvailable: true,
@@ -185,6 +197,8 @@ export async function onboardArxoMerchant(req: Request, res: Response, next: Nex
         settlementHoldDays: tierConfig.settlementHoldDays,
         rollingReservePercent: tierConfig.rollingReservePercent,
         rollingReserveDays: tierConfig.rollingReserveDays,
+        setupFee: tierConfig.setupFee,
+        monthlyMaintenanceFee: tierConfig.monthlyMaintenanceFee,
       },
     })
   } catch (error) {
