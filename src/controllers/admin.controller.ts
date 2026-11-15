@@ -970,7 +970,7 @@ export async function getAdminTransactions(req: AdminRequest, res: Response, nex
 // Super Admin Global Revenue & Platform Analytics
 export async function getSuperAdminAnalytics(_req: Request, res: Response, next: NextFunction) {
   try {
-    const [totalMerchants, approvedMerchants, resellers, txnAgg] = await Promise.all([
+    const [totalMerchants, approvedMerchants, resellers, txnAgg, approvedList] = await Promise.all([
       Merchant.countDocuments(),
       Merchant.countDocuments({ applicationStatus: 'approved' }),
       ResellerConfig.find().select('resellerId stripe.mode stripe.isConfigured feeSettings totalVolumeProcessed totalPlatformFeesEarned totalResellerProfit updatedAt'),
@@ -987,6 +987,7 @@ export async function getSuperAdminAnalytics(_req: Request, res: Response, next:
           },
         },
       ]),
+      Merchant.find({ applicationStatus: 'approved' }).select('setupFeeAmount offer subscription tier'),
     ])
 
     const agg = txnAgg[0] || {
@@ -996,6 +997,33 @@ export async function getSuperAdminAnalytics(_req: Request, res: Response, next:
       totalMerchantNet: 0,
       totalTransactions: 0,
     }
+
+    let totalSetupFees = 0
+    let totalMonthlyRecurring = 0
+
+    for (const m of approvedList) {
+      let sFee = m.setupFeeAmount || 0
+      if (!sFee && m.offer?.setupFee) {
+        const parsed = parseFloat(m.offer.setupFee.replace(/[^0-9.]/g, ''))
+        if (!isNaN(parsed) && parsed > 0) sFee = parsed
+      }
+      if (!sFee) {
+        sFee = m.offer?.tier === 2 ? 2500 : 1499
+      }
+      totalSetupFees += sFee
+
+      let mFee = m.subscription?.monthlyFee || 0
+      if (!mFee && m.offer?.monthlyFee) {
+        const parsedM = parseFloat(m.offer.monthlyFee.replace(/[^0-9.]/g, ''))
+        if (!isNaN(parsedM) && parsedM > 0) mFee = parsedM
+      }
+      if (!mFee) {
+        mFee = 499
+      }
+      totalMonthlyRecurring += mFee
+    }
+
+    const totalPlatformRevenue = Number((agg.totalPlatformFees + totalSetupFees).toFixed(2))
 
     res.status(200).json({
       success: true,
@@ -1008,6 +1036,9 @@ export async function getSuperAdminAnalytics(_req: Request, res: Response, next:
         totalMerchants,
         approvedMerchants,
         platformFeeRate: 9.0,
+        totalSetupFees: Number(totalSetupFees.toFixed(2)),
+        totalMonthlyRecurring: Number(totalMonthlyRecurring.toFixed(2)),
+        totalPlatformRevenue,
         resellers,
       },
     })
