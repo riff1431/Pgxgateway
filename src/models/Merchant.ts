@@ -160,6 +160,27 @@ export interface IMerchant extends Document {
     notes?: string
   }
 
+  // Arxopay Wholesale Go-Live & Monthly Maintenance Crypto Records
+  arxopayWholesale?: {
+    setupFee?: {
+      amount: number
+      currency: string
+      network?: string
+      txHash?: string
+      paidAt?: Date
+      status: 'none' | 'pending' | 'verified'
+    }
+    monthlyMaintenance?: {
+      amount: number
+      currency?: string
+      network?: string
+      txHash?: string
+      lastPaidAt?: Date
+      nextDueAt?: Date
+      status: 'none' | 'current' | 'due' | 'pending_verification'
+    }
+  }
+
   createdAt: Date
   updatedAt: Date
 
@@ -338,8 +359,8 @@ const MerchantSchema = new Schema<IMerchant>(
       volume: { type: String, default: '' },
       settlement: { type: String, default: '' },
       reserve: { type: String, default: '' },
-      setupFee: { type: String, default: '$999' },
-      monthlyFee: { type: String, default: '$99 / month' },
+      setupFee: { type: String, default: '' },
+      monthlyFee: { type: String, default: '' },
       isAvailable: { type: Boolean, default: false },
       accepted: { type: Boolean, default: false },
       acceptedAt: { type: Date },
@@ -382,6 +403,35 @@ const MerchantSchema = new Schema<IMerchant>(
       verifiedAt: { type: Date },
       verifiedBy: { type: String },
       notes: { type: String, default: '' },
+    },
+
+    // Arxopay Wholesale Go-Live & Monthly Maintenance Crypto Records
+    arxopayWholesale: {
+      setupFee: {
+        amount: { type: Number, default: 499 },
+        currency: { type: String, default: 'USDT' },
+        network: { type: String, default: 'TRC-20' },
+        txHash: { type: String, default: '' },
+        paidAt: { type: Date },
+        status: {
+          type: String,
+          enum: ['none', 'pending', 'verified'],
+          default: 'none',
+        },
+      },
+      monthlyMaintenance: {
+        amount: { type: Number, default: 499 },
+        currency: { type: String, default: 'USDT' },
+        network: { type: String, default: 'TRC-20' },
+        txHash: { type: String, default: '' },
+        lastPaidAt: { type: Date },
+        nextDueAt: { type: Date },
+        status: {
+          type: String,
+          enum: ['none', 'current', 'due', 'pending_verification'],
+          default: 'none',
+        },
+      },
     },
   },
   {

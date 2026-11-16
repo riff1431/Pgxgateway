@@ -87,37 +87,56 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
     }
 
     // 2. Check 24-Hour Trial & Account Status Guardrails
-    if (merchant.accountMode === 'trial' || merchant.trial?.isActive) {
-      const isExpired = merchant.trial?.expiresAt && new Date() > new Date(merchant.trial.expiresAt)
-      if (isExpired || merchant.trial?.status === 'expired') {
-        if (merchant.trial && merchant.trial.status !== 'expired') {
-          merchant.trial.status = 'expired'
-          merchant.trial.isActive = false
-          await merchant.save()
-        }
+    if (merchant.accountMode !== 'live') {
+      if (merchant.accountMode === 'suspended') {
         return res.status(403).json({
           success: false,
-          code: 'TRIAL_EXPIRED',
-          message:
-            'Your 24-hour PGX integration trial has expired. Please complete your setup fee payment in the merchant dashboard to activate permanent live processing.',
+          code: 'ACCOUNT_SUSPENDED',
+          message: 'This merchant account is suspended. Please contact underwriting support.',
         })
       }
 
-      // Safety Guardrail: Max single trial transaction
-      const maxAllowed = merchant.trial?.maxTestAmount || 100
-      if (numericAmount > maxAllowed) {
-        return res.status(400).json({
+      if (merchant.accountMode === 'trial') {
+        // Guardrail: Underwriting must explicitly turn on 24h trial
+        if (!merchant.trial?.isActive || merchant.trial?.status !== 'active' || !merchant.trial?.expiresAt) {
+          return res.status(403).json({
+            success: false,
+            code: 'TRIAL_NOT_ACTIVATED',
+            message:
+              '24-Hour Integration Trial has not been activated yet by underwriting. Please await approval before initiating transactions.',
+          })
+        }
+
+        // Guardrail: 24h trial auto-expiry check
+        const isExpired = new Date() > new Date(merchant.trial.expiresAt)
+        if (isExpired) {
+          merchant.trial.status = 'expired'
+          merchant.trial.isActive = false
+          await merchant.save()
+          return res.status(403).json({
+            success: false,
+            code: 'TRIAL_EXPIRED',
+            message:
+              'Your 24-hour PGX integration trial has expired. Integration access and checkout sessions are disabled.',
+          })
+        }
+
+        // Safety Guardrail: Max single trial transaction
+        const maxAllowed = merchant.trial?.maxTestAmount || 100
+        if (numericAmount > maxAllowed) {
+          return res.status(400).json({
+            success: false,
+            code: 'TRIAL_LIMIT_EXCEEDED',
+            message: `Trial sandbox mode is limited to orders up to $${maxAllowed}.00. Settle your setup fee to activate unlimited volume.`,
+          })
+        }
+      } else {
+        return res.status(403).json({
           success: false,
-          code: 'TRIAL_LIMIT_EXCEEDED',
-          message: `Trial sandbox mode is limited to orders up to $${maxAllowed}.00. Settle your setup fee to activate unlimited volume.`,
+          code: 'ACCOUNT_NOT_LIVE',
+          message: 'Merchant account is not active for live or trial processing.',
         })
       }
-    } else if (merchant.accountMode === 'suspended') {
-      return res.status(403).json({
-        success: false,
-        code: 'ACCOUNT_SUSPENDED',
-        message: 'This merchant account is suspended. Please contact underwriting support.',
-      })
     }
 
     const resellerId = merchant.resellerId || 'admin_root'

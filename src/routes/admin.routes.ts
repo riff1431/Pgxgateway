@@ -8,6 +8,7 @@ import {
   convertMerchantToLive,
   requestMerchantLiveActivation,
   rejectMerchantLiveActivation,
+  submitMonthlyCryptoPayment,
   deleteMerchantApplication,
   getAdminStats,
   getSystemConfig,
@@ -52,6 +53,7 @@ router.patch('/applications/:id/review', reviewApplication)
 router.post('/applications/:id/extend-trial', extendMerchantTrial)
 router.post('/applications/:id/convert-live', convertMerchantToLive)
 router.post('/applications/:id/request-live', requestMerchantLiveActivation)
+router.post('/applications/:id/pay-monthly', submitMonthlyCryptoPayment)
 router.post('/applications/:id/reject-live', superAdminOnly, rejectMerchantLiveActivation)
 router.delete('/applications/:id', deleteMerchantApplication)
 

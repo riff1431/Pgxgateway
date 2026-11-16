@@ -329,6 +329,31 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
           merchant.liveActivationRequest.reviewedAt = new Date()
           merchant.liveActivationRequest.reviewedBy = req.admin?.email || 'Platform Super Admin'
         }
+
+        // Initialize Arxopay wholesale 30-day maintenance cycle upon going live
+        const isArxo = merchant.resellerId === 'ARXO' || merchant.refId?.startsWith('ARXO-')
+        if (isArxo) {
+          const nextDue = new Date(Date.now() + 30 * 24 * 3600 * 1000)
+          merchant.arxopayWholesale = {
+            setupFee: {
+              amount: 499,
+              currency: merchant.arxopayWholesale?.setupFee?.currency || 'USDT',
+              network: merchant.arxopayWholesale?.setupFee?.network || 'TRC-20',
+              txHash: merchant.arxopayWholesale?.setupFee?.txHash || '',
+              paidAt: merchant.arxopayWholesale?.setupFee?.paidAt || new Date(),
+              status: 'verified',
+            },
+            monthlyMaintenance: {
+              amount: 499,
+              currency: merchant.arxopayWholesale?.monthlyMaintenance?.currency || 'USDT',
+              network: merchant.arxopayWholesale?.monthlyMaintenance?.network || 'TRC-20',
+              txHash: merchant.arxopayWholesale?.monthlyMaintenance?.txHash || '',
+              lastPaidAt: merchant.arxopayWholesale?.monthlyMaintenance?.lastPaidAt,
+              nextDueAt: merchant.arxopayWholesale?.monthlyMaintenance?.nextDueAt || nextDue,
+              status: 'current',
+            },
+          }
+        }
       }
     }
 
@@ -541,6 +566,31 @@ export async function convertMerchantToLive(req: AdminRequest, res: Response, ne
       merchant.liveActivationRequest.reviewedBy = req.admin?.email || 'Platform Super Admin'
     }
 
+    // Initialize Arxopay wholesale 30-day maintenance cycle upon going live
+    const isArxo = merchant.resellerId === 'ARXO' || merchant.refId?.startsWith('ARXO-')
+    if (isArxo) {
+      const nextDue = new Date(Date.now() + 30 * 24 * 3600 * 1000)
+      merchant.arxopayWholesale = {
+        setupFee: {
+          amount: 499,
+          currency: merchant.arxopayWholesale?.setupFee?.currency || 'USDT',
+          network: merchant.arxopayWholesale?.setupFee?.network || 'TRC-20',
+          txHash: merchant.arxopayWholesale?.setupFee?.txHash || '',
+          paidAt: merchant.arxopayWholesale?.setupFee?.paidAt || new Date(),
+          status: 'verified',
+        },
+        monthlyMaintenance: {
+          amount: 499,
+          currency: merchant.arxopayWholesale?.monthlyMaintenance?.currency || 'USDT',
+          network: merchant.arxopayWholesale?.monthlyMaintenance?.network || 'TRC-20',
+          txHash: merchant.arxopayWholesale?.monthlyMaintenance?.txHash || '',
+          lastPaidAt: merchant.arxopayWholesale?.monthlyMaintenance?.lastPaidAt,
+          nextDueAt: merchant.arxopayWholesale?.monthlyMaintenance?.nextDueAt || nextDue,
+          status: 'current',
+        },
+      }
+    }
+
     await merchant.save()
 
     const notification = await Notification.create({
@@ -586,7 +636,7 @@ export async function convertMerchantToLive(req: AdminRequest, res: Response, ne
 export async function requestMerchantLiveActivation(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
-    const { notes } = req.body
+    const { notes, txHash, currency = 'USDT', network = 'TRC-20' } = req.body
 
     const merchant = await Merchant.findById(id)
     if (!merchant) {
@@ -608,8 +658,24 @@ export async function requestMerchantLiveActivation(req: AdminRequest, res: Resp
       isRequested: true,
       requestedAt: new Date(),
       requestedByResellerId: req.admin?.resellerId || merchant.resellerId || 'reseller',
-      notes: notes || 'Partner requested full live processing after trial verification.',
+      notes: notes || (txHash ? `Arxopay paid $499 Go-Live Setup Fee via ${currency} (${network}). TxID: ${txHash}` : 'Partner requested full live processing after trial verification.'),
       status: 'pending',
+    }
+
+    // If txHash or Arxopay merchant, record setup crypto payment
+    const isArxo = merchant.resellerId === 'ARXO' || merchant.refId?.startsWith('ARXO-')
+    if (txHash || isArxo) {
+      merchant.arxopayWholesale = {
+        ...merchant.arxopayWholesale,
+        setupFee: {
+          amount: 499,
+          currency: currency || 'USDT',
+          network: network || 'TRC-20',
+          txHash: String(txHash || '').trim(),
+          paidAt: new Date(),
+          status: txHash ? 'pending' : 'none',
+        },
+      }
     }
 
     await merchant.save()
@@ -646,6 +712,57 @@ export async function requestMerchantLiveActivation(req: AdminRequest, res: Resp
       success: true,
       message: 'Live activation request submitted successfully. Super Admin review turnaround is within 24 hours.',
       data: merchant,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Submit Arxopay Monthly Maintenance Crypto Payment ($499 via Crypto)
+export async function submitMonthlyCryptoPayment(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+    const { txHash, currency = 'USDT', network = 'TRC-20' } = req.body
+
+    if (!txHash) {
+      return res.status(400).json({ success: false, message: 'Transaction Hash (TxID) is required.' })
+    }
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    // Portfolio scoping: Resellers can only submit for their own sub-merchants
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      if (merchant.resellerId && merchant.resellerId !== req.admin.resellerId) {
+        return res.status(403).json({ success: false, message: 'Unauthorized. Merchant belongs to another partner portfolio.' })
+      }
+    }
+
+    const currentNextDue = merchant.arxopayWholesale?.monthlyMaintenance?.nextDueAt
+    const baseDate = currentNextDue && new Date(currentNextDue) > new Date() ? new Date(currentNextDue) : new Date()
+    const nextDueAt = new Date(baseDate.getTime() + 30 * 24 * 3600 * 1000)
+
+    merchant.arxopayWholesale = {
+      ...merchant.arxopayWholesale,
+      monthlyMaintenance: {
+        amount: 499,
+        currency,
+        network,
+        txHash: String(txHash).trim(),
+        lastPaidAt: new Date(),
+        nextDueAt,
+        status: 'pending_verification',
+      },
+    }
+
+    await merchant.save()
+
+    return res.status(200).json({
+      success: true,
+      message: 'Monthly maintenance payment of $499 submitted for verification. Next cycle set.',
+      monthlyMaintenance: merchant.arxopayWholesale.monthlyMaintenance,
     })
   } catch (error) {
     next(error)

@@ -68,6 +68,8 @@ export async function register(req: Request, res: Response, next: NextFunction) 
         volume: '',
         settlement: '',
         reserve: '',
+        setupFee: '',
+        monthlyFee: '',
         isAvailable: false,
         accepted: false,
       },
