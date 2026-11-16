@@ -3,7 +3,7 @@ import { Merchant } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
 import { Transaction } from '../models/Transaction.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
-import { emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
+import { emitToMerchant, emitToAdmins, WS_EVENTS } from '../services/socket.service.js'
 import { uploadBufferToCloudinary } from '../config/cloudinary.js'
 
 // Update Step 2: Business & Processing Information
@@ -422,9 +422,41 @@ export async function getMerchantTransactions(req: AuthRequest, res: Response, n
       return res.status(401).json({ success: false, message: 'Unauthorized' })
     }
 
-    const merchant = await Merchant.findById(merchantId).select('refId legalName fullName')
+    const merchant = await Merchant.findById(merchantId).select(
+      'refId legalName fullName payoutSettings payoutHistory balance'
+    )
     if (!merchant || !merchant.refId) {
       return res.status(404).json({ success: false, message: 'Merchant reference not found.' })
+    }
+
+    const now = new Date()
+
+    // 1. Auto-mature 14-day (or 45-day) settlement holds if eligible date has passed
+    await Transaction.updateMany(
+      {
+        merchantRefId: merchant.refId,
+        status: 'succeeded',
+        settlementStatus: 'on_hold',
+        settlementEligibleAt: { $lte: now },
+      },
+      {
+        $set: { settlementStatus: 'available' },
+      }
+    )
+
+    // 2. Auto-release matured rolling reserves if reserve release date has passed
+    const maturedReserves = await Transaction.find({
+      merchantRefId: merchant.refId,
+      status: 'succeeded',
+      rollingReserveStatus: 'locked',
+      rollingReserveReleaseAt: { $lte: now },
+    })
+
+    if (maturedReserves.length > 0) {
+      for (const txn of maturedReserves) {
+        txn.rollingReserveStatus = 'released'
+        await txn.save()
+      }
     }
 
     const transactions = await Transaction.find({ merchantRefId: merchant.refId })
@@ -439,32 +471,169 @@ export async function getMerchantTransactions(req: AuthRequest, res: Response, n
 
     transactions.forEach((t) => {
       if (t.status === 'succeeded') {
-        totalGross += t.grossAmount || 0
-        totalNet += t.merchantNetAmount || 0
+        const gross = t.grossAmount || 0
+        const fee = t.resellerFeeAmount || t.platformFeeAmount || 0
+        const reserve = t.rollingReserveAmount || 0
+        // Net settlement held for 14-day maturity (gross minus processing fee minus rolling reserve)
+        const netSettlement = Math.max(0, gross - fee - reserve)
+
+        totalGross += gross
+        totalNet += t.merchantNetAmount || Math.max(0, gross - fee)
 
         if (t.settlementStatus === 'on_hold') {
-          onHoldBalance += t.merchantNetAmount || 0
+          onHoldBalance += netSettlement
         } else if (t.settlementStatus === 'available') {
-          availableBalance += t.merchantNetAmount || 0
+          availableBalance += netSettlement
         }
 
         if (t.rollingReserveStatus === 'locked') {
-          rollingReserveBalance += t.rollingReserveAmount || 0
+          rollingReserveBalance += reserve
+        } else if (t.rollingReserveStatus === 'released' && t.settlementStatus !== 'paid_out') {
+          // Once released from reserve escrow, it enters available payout balance if not already disbursed
+          availableBalance += reserve
         }
       }
     })
 
+    // Calculate total completed daily deposits/payouts sent to merchant
+    const totalDeposited = (merchant.payoutHistory || []).reduce(
+      (sum, p) => sum + (p.status === 'completed' ? p.amount || 0 : 0),
+      0
+    )
+
+    // Deduct already disbursed amounts from available balance so it stays accurate
+    const netAvailable = Math.max(0, availableBalance - totalDeposited)
+
     return res.status(200).json({
       success: true,
       data: transactions,
+      payoutHistory: (merchant.payoutHistory || []).sort(
+        (a, b) => new Date(b.depositedAt).getTime() - new Date(a.depositedAt).getTime()
+      ),
+      payoutSettings: merchant.payoutSettings || {},
       metrics: {
         totalGross: parseFloat(totalGross.toFixed(2)),
         totalNet: parseFloat(totalNet.toFixed(2)),
         onHoldBalance: parseFloat(onHoldBalance.toFixed(2)),
-        availableBalance: parseFloat(availableBalance.toFixed(2)),
+        availableBalance: parseFloat(netAvailable.toFixed(2)),
         rollingReserveBalance: parseFloat(rollingReserveBalance.toFixed(2)),
+        totalDeposited: parseFloat(totalDeposited.toFixed(2)),
         totalCount: transactions.length,
       },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Update Merchant Payout & Settlement Receiving Destination
+export async function updatePayoutSettings(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user?._id
+    if (!merchantId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' })
+    }
+
+    const { preferredMethod, cryptoUsdc, bankSwift } = req.body
+
+    const merchant = await Merchant.findById(merchantId)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    merchant.payoutSettings = {
+      preferredMethod: preferredMethod === 'bank_swift' ? 'bank_swift' : 'crypto_usdc',
+      cryptoUsdc: {
+        address: cryptoUsdc?.address ? String(cryptoUsdc.address).trim() : '',
+        network: cryptoUsdc?.network ? String(cryptoUsdc.network).trim() : 'ERC-20',
+      },
+      bankSwift: {
+        beneficiaryName: bankSwift?.beneficiaryName ? String(bankSwift.beneficiaryName).trim() : '',
+        bankName: bankSwift?.bankName ? String(bankSwift.bankName).trim() : '',
+        swiftBic: bankSwift?.swiftBic ? String(bankSwift.swiftBic).trim().toUpperCase() : '',
+        ibanOrAccountNumber: bankSwift?.ibanOrAccountNumber
+          ? String(bankSwift.ibanOrAccountNumber).trim()
+          : '',
+        bankCountry: bankSwift?.bankCountry ? String(bankSwift.bankCountry).trim() : '',
+        routingNumber: bankSwift?.routingNumber ? String(bankSwift.routingNumber).trim() : '',
+        bankAddress: bankSwift?.bankAddress ? String(bankSwift.bankAddress).trim() : '',
+      },
+      updatedAt: new Date(),
+    }
+
+    await merchant.save()
+
+    return res.status(200).json({
+      success: true,
+      message: 'Payout destination settings saved successfully.',
+      data: merchant.payoutSettings,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Submit 30-Day Monthly Maintenance Payment (Crypto TxID + Screenshot Upload)
+export async function submitMonthlyMaintenancePayment(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const merchantId = req.user?._id
+    if (!merchantId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' })
+    }
+
+    const merchant = await Merchant.findById(merchantId)
+    if (!merchant) {
+      return res.status(404).json({ success: false, message: 'Merchant not found.' })
+    }
+
+    const { txHash, currency, network, notes } = req.body
+    let screenshotUrl = ''
+    let screenshotName = ''
+
+    if (req.file) {
+      try {
+        const cloudRes = await uploadBufferToCloudinary(
+          req.file.buffer,
+          req.file.originalname,
+          'pgxgateway/monthly_maintenance_proofs'
+        )
+        screenshotUrl = cloudRes.url
+        screenshotName = req.file.originalname
+      } catch {
+        // Safe fallback to data-uri if Cloudinary keys are unset in local environment
+        screenshotUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+        screenshotName = req.file.originalname
+      }
+    }
+
+    if (!merchant.arxopayWholesale) {
+      merchant.arxopayWholesale = {}
+    }
+
+    merchant.arxopayWholesale.monthlyMaintenance = {
+      amount: 499,
+      currency: currency || 'USDT',
+      network: network || 'TRC-20',
+      txHash: txHash ? String(txHash).trim() : '',
+      screenshotUrl,
+      screenshotName,
+      lastPaidAt: new Date(),
+      status: 'pending_verification',
+    }
+
+    await merchant.save()
+
+    emitToAdmins(WS_EVENTS.NEW_NOTIFICATION, {
+      title: 'Monthly Maintenance Payment Submitted',
+      message: `Merchant ${merchant.legalName || merchant.fullName} submitted $499 monthly maintenance payment (${currency || 'USDT'}). TxID: ${txHash || 'N/A'}.`,
+      type: 'payment',
+      priority: 'high',
+    })
+
+    return res.status(200).json({
+      success: true,
+      message: 'Monthly maintenance payment proof submitted successfully. Underwriting desk review in progress.',
+      data: merchant.arxopayWholesale.monthlyMaintenance,
     })
   } catch (error) {
     next(error)

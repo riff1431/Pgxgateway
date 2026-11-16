@@ -160,6 +160,38 @@ export interface IMerchant extends Document {
     notes?: string
   }
 
+  // Merchant Payout & Settlement Receiving Destination
+  payoutSettings?: {
+    preferredMethod?: 'crypto_usdc' | 'bank_swift'
+    cryptoUsdc?: {
+      address: string
+      network: string
+    }
+    bankSwift?: {
+      beneficiaryName: string
+      bankName: string
+      swiftBic: string
+      ibanOrAccountNumber: string
+      bankCountry: string
+      routingNumber?: string
+      bankAddress?: string
+    }
+    updatedAt?: Date
+  }
+
+  // Daily Disbursements / Deposit History (Sent by Admin)
+  payoutHistory?: Array<{
+    payoutId: string
+    amount: number
+    method: 'crypto_usdc' | 'bank_swift'
+    destination: string
+    reference: string
+    status: 'completed' | 'pending'
+    notes?: string
+    adminName?: string
+    depositedAt: Date
+  }>
+
   // Arxopay Wholesale Go-Live & Monthly Maintenance Crypto Records
   arxopayWholesale?: {
     setupFee?: {
@@ -175,6 +207,8 @@ export interface IMerchant extends Document {
       currency?: string
       network?: string
       txHash?: string
+      screenshotUrl?: string
+      screenshotName?: string
       lastPaidAt?: Date
       nextDueAt?: Date
       status: 'none' | 'current' | 'due' | 'pending_verification'
@@ -424,6 +458,8 @@ const MerchantSchema = new Schema<IMerchant>(
         currency: { type: String, default: 'USDT' },
         network: { type: String, default: 'TRC-20' },
         txHash: { type: String, default: '' },
+        screenshotUrl: { type: String, default: '' },
+        screenshotName: { type: String, default: '' },
         lastPaidAt: { type: Date },
         nextDueAt: { type: Date },
         status: {
@@ -433,6 +469,44 @@ const MerchantSchema = new Schema<IMerchant>(
         },
       },
     },
+
+    // Merchant Payout & Settlement Receiving Destination
+    payoutSettings: {
+      preferredMethod: {
+        type: String,
+        enum: ['crypto_usdc', 'bank_swift'],
+        default: 'crypto_usdc',
+      },
+      cryptoUsdc: {
+        address: { type: String, trim: true, default: '' },
+        network: { type: String, trim: true, default: 'ERC-20' },
+      },
+      bankSwift: {
+        beneficiaryName: { type: String, trim: true, default: '' },
+        bankName: { type: String, trim: true, default: '' },
+        swiftBic: { type: String, trim: true, default: '' },
+        ibanOrAccountNumber: { type: String, trim: true, default: '' },
+        bankCountry: { type: String, trim: true, default: '' },
+        routingNumber: { type: String, trim: true, default: '' },
+        bankAddress: { type: String, trim: true, default: '' },
+      },
+      updatedAt: { type: Date },
+    },
+
+    // Daily Disbursements / Deposit History (Sent by Admin)
+    payoutHistory: [
+      {
+        payoutId: { type: String, required: true },
+        amount: { type: Number, required: true },
+        method: { type: String, enum: ['crypto_usdc', 'bank_swift'], default: 'crypto_usdc' },
+        destination: { type: String, default: '' },
+        reference: { type: String, default: '' },
+        status: { type: String, enum: ['completed', 'pending'], default: 'completed' },
+        notes: { type: String, default: '' },
+        adminName: { type: String, default: '' },
+        depositedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     timestamps: true,

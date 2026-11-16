@@ -20,3 +20,26 @@
 
 ## 3. Pre-Offer Privacy & Zero Commercial Leaks
 - Before an underwriter officially reviews a merchant's business documents and dispatches a customized commercial offer, all fields in `merchant.offer` default to `''` (blank) with `isAvailable: false`.
+
+## 4. Settlement & Rolling Reserve Formula Sync
+- `getMerchantTransactions`:
+  - Dynamically matures transactions where `settlementEligibleAt <= now` from `on_hold` to `available`.
+  - Releases rolling reserves where `rollingReserveReleaseAt <= now` from `locked` to `released`.
+  - Computes `onHoldBalance` based on net settlement: `Gross - Processing MDR Fee - Rolling Reserve`.
+  - Returns `data`, `metrics`, `payoutHistory`, and `payoutSettings`.
+
+## 5. Daily Deposit Tracking & Admin Disbursement
+- `POST /api/v1/admin/merchants/:merchantId/payout` (`markMerchantPayout`):
+  - Records the daily disbursement in `merchant.payoutHistory` with `payoutId`, `amount`, `method` ('crypto_usdc' | 'bank_swift'), `destination`, `reference`, `notes`, and `depositedAt`.
+  - Deducts the disbursed amount from `merchant.balance.netBalance`.
+  - Emits real-time notification to merchant via WebSocket.
+
+## 6. Merchant Payout Settings (USDC & SWIFT)
+- `PUT /api/v1/merchants/payout-settings` (`updatePayoutSettings`):
+  - Allows merchants to update `payoutSettings.preferredMethod`, `cryptoUsdc` (address, network), and `bankSwift` (beneficiary, bank name, SWIFT/BIC, IBAN, country, routing, address).
+
+## 7. 30-Day Monthly Maintenance Payment with Screenshot
+- `POST /api/v1/merchants/monthly-maintenance/pay` (`submitMonthlyMaintenancePayment`):
+  - Accepts `txHash`, `currency`, `network`, `notes`, and optional file `req.file` for screenshot.
+  - Uploads screenshot to Cloudinary (or base64 fallback) and stores `screenshotUrl` and `screenshotName`.
+  - Updates `merchant.arxopayWholesale.monthlyMaintenance` to `pending_verification` and notifies Underwriting.

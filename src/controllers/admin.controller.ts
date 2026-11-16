@@ -1473,36 +1473,64 @@ export async function getSuperAdminAnalytics(req: Request, res: Response, next: 
   }
 }
 
-// Disburse / Record Manual Payout to a Sub-Merchant
+// Disburse / Record Manual Payout to a Sub-Merchant (Daily Deposit)
 export async function markMerchantPayout(req: Request, res: Response, next: NextFunction) {
   try {
     const merchantId = String(req.params.merchantId)
-    const { amount, reference, notes } = req.body
+    const { amount, method, destination, reference, notes, adminName } = req.body
 
     const merchant = await Merchant.findById(merchantId)
     if (!merchant) {
       return res.status(404).json({ success: false, message: 'Merchant not found.' })
     }
 
-    const payoutAmount = parseFloat(amount) || merchant.balance?.netBalance || 0
+    const payoutAmount = parseFloat(amount)
+    if (isNaN(payoutAmount) || payoutAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid payout amount.' })
+    }
 
-    await Merchant.findByIdAndUpdate(merchantId, {
-      $inc: {
-        'balance.netBalance': -payoutAmount,
-        'balance.pendingPayout': 0,
-      },
-    })
+    const payoutMethod: 'crypto_usdc' | 'bank_swift' =
+      method === 'bank_swift' ? 'bank_swift' : 'crypto_usdc'
+    const payoutId = `PAYOUT_${Date.now().toString().slice(-6)}_${crypto.randomBytes(2).toString('hex').toUpperCase()}`
+
+    // Deduct from balance
+    if (!merchant.balance) {
+      merchant.balance = { grossVolume: 0, netBalance: 0, totalFeesPaid: 0, pendingPayout: 0 }
+    }
+    merchant.balance.netBalance = Math.max(0, (merchant.balance.netBalance || 0) - payoutAmount)
+    merchant.balance.pendingPayout = 0
+
+    // Append to payoutHistory
+    if (!merchant.payoutHistory) {
+      merchant.payoutHistory = []
+    }
+
+    const payoutRecord = {
+      payoutId,
+      amount: payoutAmount,
+      method: payoutMethod,
+      destination: destination || (payoutMethod === 'crypto_usdc' ? merchant.payoutSettings?.cryptoUsdc?.address : merchant.payoutSettings?.bankSwift?.ibanOrAccountNumber) || '',
+      reference: reference || 'Daily Settlement Wire/USDC',
+      status: 'completed' as const,
+      notes: notes || '',
+      adminName: adminName || 'Settlement Desk',
+      depositedAt: new Date(),
+    }
+
+    merchant.payoutHistory.push(payoutRecord)
+    await merchant.save()
 
     emitToMerchant(merchantId, WS_EVENTS.NEW_NOTIFICATION, {
-      title: 'Payout Disbursed',
-      message: `A payout of $${payoutAmount.toFixed(2)} has been recorded (${reference || 'Wire/Crypto'}). ${notes || ''}`,
-      type: 'system',
+      title: 'Daily Deposit Sent & Confirmed',
+      message: `A settlement deposit of $${payoutAmount.toFixed(2)} has been sent via ${payoutMethod === 'crypto_usdc' ? 'Crypto USDC' : 'Bank SWIFT Wire'}. Ref: ${reference || 'N/A'}.`,
+      type: 'payment',
       priority: 'high',
     })
 
     res.status(200).json({
       success: true,
-      message: `Payout of $${payoutAmount.toFixed(2)} recorded successfully for ${merchant.legalName || merchant.fullName}.`,
+      message: `Deposit of $${payoutAmount.toFixed(2)} recorded successfully for ${merchant.legalName || merchant.fullName}.`,
+      data: payoutRecord,
     })
   } catch (error) {
     next(error)

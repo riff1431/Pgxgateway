@@ -10,9 +10,11 @@ import {
   submitRegistration,
   getMerchantByEmail,
   getMerchantTransactions,
+  updatePayoutSettings,
+  submitMonthlyMaintenancePayment,
 } from '../controllers/merchant.controller.js'
 import { protect } from '../middleware/auth.middleware.js'
-import { uploadDocs } from '../middleware/upload.middleware.js'
+import { uploadDocs, uploadImage } from '../middleware/upload.middleware.js'
 
 const router = Router()
 
@@ -37,6 +39,13 @@ router.post('/offer/accept', protect, acceptProcessingOffer)
 router.post('/avatar', uploadDocs.single('avatar'), uploadAvatar)
 router.patch('/avatar', uploadAvatar)
 router.get('/transactions', protect, getMerchantTransactions)
+router.put('/payout-settings', protect, updatePayoutSettings)
+router.post(
+  '/monthly-maintenance/pay',
+  protect,
+  uploadImage.single('screenshot'),
+  submitMonthlyMaintenancePayment
+)
 
 // Backward-compatible fallback routes
 router.post('/register', submitRegistration)
