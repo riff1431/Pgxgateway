@@ -280,6 +280,7 @@ export async function getMerchantSetupStatus(req: AuthRequest, res: Response, ne
       success: true,
       setup: {
         merchantId: merchant._id,
+        refId: merchant.refId,
         fullName: merchant.fullName,
         businessEmail: merchant.businessEmail,
         websiteDomain: merchant.websiteDomain || merchant.website || '',

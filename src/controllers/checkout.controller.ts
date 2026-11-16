@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import mongoose from 'mongoose'
 import { config } from '../config/env.js'
 import { Merchant } from '../models/Merchant.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
@@ -7,13 +8,18 @@ import { createStripeCheckoutSession } from '../services/stripe.service.js'
 
 export async function getMerchantPublicProfile(req: Request, res: Response, next: NextFunction) {
   try {
-    const refId = String(req.params.refId || '')
+    const cleanRef = String(req.params.refId || '').trim()
 
-    if (!refId) {
+    if (!cleanRef) {
       return res.status(400).json({ success: false, message: 'Merchant Reference ID is required.' })
     }
 
-    const merchant = await Merchant.findOne({ refId: refId.toUpperCase().trim() }).select(
+    const isObjectId = mongoose.Types.ObjectId.isValid(cleanRef) && cleanRef.length === 24
+    const merchant = await Merchant.findOne(
+      isObjectId
+        ? { $or: [{ refId: cleanRef.toUpperCase() }, { _id: cleanRef }] }
+        : { refId: cleanRef.toUpperCase() }
+    ).select(
       'refId legalName fullName industry website applicationStatus avatarUrl'
     )
 
@@ -65,8 +71,14 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
       })
     }
 
-    // 1. Find Sub-Merchant
-    const merchant = await Merchant.findOne({ refId: refId.toUpperCase().trim() })
+    // 1. Find Sub-Merchant (support both refId and _id in case merchant passes account ID)
+    const cleanRef = String(refId || '').trim()
+    const isObjectId = mongoose.Types.ObjectId.isValid(cleanRef) && cleanRef.length === 24
+    const merchant = await Merchant.findOne(
+      isObjectId
+        ? { $or: [{ refId: cleanRef.toUpperCase() }, { _id: cleanRef }] }
+        : { refId: cleanRef.toUpperCase() }
+    )
     if (!merchant) {
       return res.status(404).json({
         success: false,
