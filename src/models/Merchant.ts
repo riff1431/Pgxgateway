@@ -442,7 +442,7 @@ const MerchantSchema = new Schema<IMerchant>(
     // Arxopay Wholesale Go-Live & Monthly Maintenance Crypto Records
     arxopayWholesale: {
       setupFee: {
-        amount: { type: Number, default: 499 },
+        amount: { type: Number, default: 1499 },
         currency: { type: String, default: 'USDT' },
         network: { type: String, default: 'TRC-20' },
         txHash: { type: String, default: '' },

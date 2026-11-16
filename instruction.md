@@ -2,9 +2,9 @@
 
 ## 1. Arxopay Partner Fee Policy
 - **No Client-Direct Setup or Maintenance Fees**: For all sub-merchants under the Arxopay partner umbrella (`resellerId === 'ARXO' || resellerId === 'arxopay' || refId.startsWith('ARXO-')`), clients are never charged setup fees or recurring monthly maintenance fees directly.
-- **Wholesale Go-Live Setup Fee ($499 via Crypto Only)**:
+- **Wholesale Go-Live Setup Fee ($1,499 via Crypto Only)**:
   - When the Arxopay partner desk requests "Go Live" for an approved sub-merchant, a pop-up modal appears directly to Arxopay.
-  - Arxopay pays the wholesale setup fee of **$499.00 USD** to PGX Gateway on behalf of the merchant via Crypto only (USDT TRC-20, USDT ERC-20, BTC, USDC).
+  - Arxopay pays the wholesale setup fee of **$1,499.00 USD** to PGX Gateway on behalf of the merchant via Crypto only (USDT TRC-20, USDT ERC-20, BTC, USDC).
   - The partner submits the transaction hash (TxID), which is recorded in `merchant.arxopayWholesale.setupFee`.
 - **Wholesale Recurring Monthly Maintenance ($499 via Crypto Only)**:
   - From the timestamp a merchant goes live, a 30-day recurring maintenance cycle is initiated (`merchant.arxopayWholesale.monthlyMaintenance.nextDueAt`).

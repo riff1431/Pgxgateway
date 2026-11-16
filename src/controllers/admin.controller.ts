@@ -336,7 +336,7 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
           const nextDue = new Date(Date.now() + 30 * 24 * 3600 * 1000)
           merchant.arxopayWholesale = {
             setupFee: {
-              amount: 499,
+              amount: 1499,
               currency: merchant.arxopayWholesale?.setupFee?.currency || 'USDT',
               network: merchant.arxopayWholesale?.setupFee?.network || 'TRC-20',
               txHash: merchant.arxopayWholesale?.setupFee?.txHash || '',
@@ -572,7 +572,7 @@ export async function convertMerchantToLive(req: AdminRequest, res: Response, ne
       const nextDue = new Date(Date.now() + 30 * 24 * 3600 * 1000)
       merchant.arxopayWholesale = {
         setupFee: {
-          amount: 499,
+          amount: 1499,
           currency: merchant.arxopayWholesale?.setupFee?.currency || 'USDT',
           network: merchant.arxopayWholesale?.setupFee?.network || 'TRC-20',
           txHash: merchant.arxopayWholesale?.setupFee?.txHash || '',
@@ -658,7 +658,7 @@ export async function requestMerchantLiveActivation(req: AdminRequest, res: Resp
       isRequested: true,
       requestedAt: new Date(),
       requestedByResellerId: req.admin?.resellerId || merchant.resellerId || 'reseller',
-      notes: notes || (txHash ? `Arxopay paid $499 Go-Live Setup Fee via ${currency} (${network}). TxID: ${txHash}` : 'Partner requested full live processing after trial verification.'),
+      notes: notes || (txHash ? `Arxopay paid $1499 Go-Live Setup Fee via ${currency} (${network}). TxID: ${txHash}` : 'Partner requested full live processing after trial verification.'),
       status: 'pending',
     }
 
@@ -668,7 +668,7 @@ export async function requestMerchantLiveActivation(req: AdminRequest, res: Resp
       merchant.arxopayWholesale = {
         ...merchant.arxopayWholesale,
         setupFee: {
-          amount: 499,
+          amount: 1499,
           currency: currency || 'USDT',
           network: network || 'TRC-20',
           txHash: String(txHash || '').trim(),
