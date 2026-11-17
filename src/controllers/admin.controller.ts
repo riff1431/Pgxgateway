@@ -279,7 +279,13 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
 
     // Multi-tenant isolation: Sub-resellers can only review their own merchants
     if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      if (merchant.resellerId !== req.admin.resellerId) {
+      const adminReseller = String(req.admin.resellerId).toLowerCase().trim()
+      const merchantReseller = String(merchant.resellerId || 'admin_root').toLowerCase().trim()
+      const isArxoMatch =
+        (adminReseller === 'arxo' || adminReseller === 'arxopay') &&
+        (merchantReseller === 'arxo' || merchantReseller === 'arxopay' || merchant.refId?.toUpperCase().startsWith('ARXO-'))
+
+      if (adminReseller !== merchantReseller && !isArxoMatch) {
         return res.status(403).json({
           success: false,
           message: 'Access denied. You do not have permission to review merchants outside your reseller portfolio.',
@@ -645,7 +651,13 @@ export async function requestMerchantLiveActivation(req: AdminRequest, res: Resp
 
     // Portfolio scoping: Resellers can only request for their own sub-merchants
     if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      if (merchant.resellerId && merchant.resellerId !== req.admin.resellerId) {
+      const adminReseller = String(req.admin.resellerId).toLowerCase().trim()
+      const merchantReseller = String(merchant.resellerId || 'admin_root').toLowerCase().trim()
+      const isArxoMatch =
+        (adminReseller === 'arxo' || adminReseller === 'arxopay') &&
+        (merchantReseller === 'arxo' || merchantReseller === 'arxopay' || merchant.refId?.toUpperCase().startsWith('ARXO-'))
+
+      if (adminReseller !== merchantReseller && !isArxoMatch) {
         return res.status(403).json({ success: false, message: 'Unauthorized. Merchant belongs to another partner portfolio.' })
       }
     }
@@ -735,7 +747,13 @@ export async function submitMonthlyCryptoPayment(req: AdminRequest, res: Respons
 
     // Portfolio scoping: Resellers can only submit for their own sub-merchants
     if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      if (merchant.resellerId && merchant.resellerId !== req.admin.resellerId) {
+      const adminReseller = String(req.admin.resellerId).toLowerCase().trim()
+      const merchantReseller = String(merchant.resellerId || 'admin_root').toLowerCase().trim()
+      const isArxoMatch =
+        (adminReseller === 'arxo' || adminReseller === 'arxopay') &&
+        (merchantReseller === 'arxo' || merchantReseller === 'arxopay' || merchant.refId?.toUpperCase().startsWith('ARXO-'))
+
+      if (adminReseller !== merchantReseller && !isArxoMatch) {
         return res.status(403).json({ success: false, message: 'Unauthorized. Merchant belongs to another partner portfolio.' })
       }
     }
@@ -817,19 +835,15 @@ export async function deleteMerchantApplication(req: AdminRequest, res: Response
       })
     }
 
-    // Multi-tenant isolation: Sub-resellers can only review their own merchants
+    // Multi-tenant scoping: Resellers can only delete merchants belonging to their own tenant; Root Admin & Super Admin can delete all
     if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      if (merchant.resellerId !== req.admin.resellerId) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied. You do not have permission to review merchants outside your reseller portfolio.',
-        })
-      }
-    }
+      const adminReseller = String(req.admin.resellerId).toLowerCase().trim()
+      const merchantReseller = String(merchant.resellerId || 'admin_root').toLowerCase().trim()
+      const isArxoMatch =
+        (adminReseller === 'arxo' || adminReseller === 'arxopay') &&
+        (merchantReseller === 'arxo' || merchantReseller === 'arxopay' || merchant.refId?.toUpperCase().startsWith('ARXO-'))
 
-    // Multi-tenant scoping: Resellers can only delete merchants belonging to their tenant
-    if (req.admin?.role === 'admin' && merchant.resellerId && req.admin.resellerId) {
-      if (merchant.resellerId !== req.admin.resellerId) {
+      if (adminReseller !== merchantReseller && !isArxoMatch) {
         return res.status(403).json({
           success: false,
           message: 'Access denied: You can only delete merchant applications within your assigned reseller tenant.',
