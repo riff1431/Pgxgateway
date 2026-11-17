@@ -195,11 +195,34 @@ export async function getApplications(req: AdminRequest, res: Response, next: Ne
       Merchant.countDocuments(query),
     ])
 
+    // Query unread message counts for each merchant sent by merchant that admin hasn't read
+    const merchantIds = merchants.map((m) => m._id)
+    const unreadAgg = await Notification.aggregate([
+      {
+        $match: {
+          merchantId: { $in: merchantIds },
+          senderRole: 'merchant',
+          adminRead: { $ne: true },
+        },
+      },
+      {
+        $group: {
+          _id: '$merchantId',
+          count: { $sum: 1 },
+        },
+      },
+    ])
+    const unreadMap = new Map<string, number>()
+    unreadAgg.forEach((u) => {
+      unreadMap.set(String(u._id), u.count)
+    })
+
     const sanitizedMerchants = merchants.map((m) => {
-      const doc = m.toObject ? m.toObject() : { ...m }
+      const doc: any = m.toObject ? m.toObject() : { ...m }
       if (doc.cryptoPayment && (doc.cryptoPayment.amount === 450 || !doc.cryptoPayment.amount)) {
         doc.cryptoPayment.amount = 999
       }
+      doc.unreadMessagesCount = unreadMap.get(String(m._id)) || 0
       return doc
     })
 
@@ -1036,6 +1059,8 @@ export async function sendMessageToMerchant(req: Request, res: Response, next: N
       labels: sanitizedLabels,
       replyTo: replyTo || null,
       isRead: false,
+      adminRead: true, // Created by admin
+      adminReadAt: new Date(),
     })
 
     const unreadCount = await Notification.countDocuments({
@@ -1085,6 +1110,12 @@ export async function getMerchantMessages(req: Request, res: Response, next: Nex
         })
       }
     }
+
+    // Mark unread merchant messages as read by admin upon opening the desk thread
+    await Notification.updateMany(
+      { merchantId: id, senderRole: 'merchant', adminRead: { $ne: true } },
+      { $set: { adminRead: true, adminReadAt: new Date() } }
+    )
 
     const messages = await Notification.find({ merchantId: id }).sort({ createdAt: -1 })
 
@@ -1324,6 +1355,15 @@ export async function getAdminTransactions(req: AdminRequest, res: Response, nex
 
     if (search && typeof search === 'string') {
       const regex = new RegExp(search.trim(), 'i')
+      const matchingMerchants = await Merchant.find({
+        $or: [{ fullName: regex }, { legalName: regex }],
+      })
+        .select('_id refId')
+        .lean()
+
+      const matchedMIds = matchingMerchants.map((m) => m._id)
+      const matchedRefIds = matchingMerchants.map((m) => m.refId).filter(Boolean)
+
       andConditions.push({
         $or: [
           { transactionId: regex },
@@ -1331,6 +1371,8 @@ export async function getAdminTransactions(req: AdminRequest, res: Response, nex
           { customerEmail: regex },
           { customerName: regex },
           { orderId: regex },
+          ...(matchedMIds.length > 0 ? [{ merchantId: { $in: matchedMIds } }] : []),
+          ...(matchedRefIds.length > 0 ? [{ merchantRefId: { $in: matchedRefIds } }] : []),
         ],
       })
     }
@@ -1346,9 +1388,47 @@ export async function getAdminTransactions(req: AdminRequest, res: Response, nex
       Transaction.countDocuments(query),
     ])
 
+    // Resolve merchant names for all transactions
+    const merchantIds = transactions.map((t) => t.merchantId).filter(Boolean)
+    const merchantRefIds = transactions.map((t) => t.merchantRefId).filter(Boolean)
+
+    const merchants = await Merchant.find({
+      $or: [
+        { _id: { $in: merchantIds } },
+        { refId: { $in: merchantRefIds } },
+      ],
+    })
+      .select('_id refId fullName legalName')
+      .lean()
+
+    const merchantMapById = new Map<string, string>()
+    const merchantMapByRef = new Map<string, string>()
+
+    merchants.forEach((m) => {
+      const name = (m.legalName || m.fullName || '').trim()
+      if (name) {
+        merchantMapById.set(String(m._id), name)
+        if (m.refId) {
+          merchantMapByRef.set(m.refId.toUpperCase().trim(), name)
+        }
+      }
+    })
+
+    const enrichedTransactions = transactions.map((t) => {
+      const doc = t.toObject ? t.toObject() : { ...t }
+      const resolvedName =
+        merchantMapById.get(String(t.merchantId)) ||
+        (t.merchantRefId ? merchantMapByRef.get(t.merchantRefId.toUpperCase().trim()) : '') ||
+        'Direct Merchant'
+      return {
+        ...doc,
+        merchantName: resolvedName,
+      }
+    })
+
     res.status(200).json({
       success: true,
-      data: transactions,
+      data: enrichedTransactions,
       pagination: {
         total,
         page: pageNum,

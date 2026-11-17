@@ -11,6 +11,8 @@ export interface INotification extends Document {
   priority: 'low' | 'normal' | 'high' | 'urgent'
   isRead: boolean
   readAt?: Date | null
+  adminRead?: boolean
+  adminReadAt?: Date | null
   replyTo?: mongoose.Types.ObjectId
   metadata?: Record<string, unknown>
   createdAt: Date
@@ -66,6 +68,15 @@ const NotificationSchema = new Schema<INotification>(
       index: true,
     },
     readAt: {
+      type: Date,
+      default: null,
+    },
+    adminRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    adminReadAt: {
       type: Date,
       default: null,
     },

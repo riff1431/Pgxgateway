@@ -90,6 +90,8 @@ export async function sendMessage(req: AuthRequest, res: Response, next: NextFun
       priority: ['low', 'normal', 'high', 'urgent'].includes(priority) ? priority : 'normal',
       isRead: true, // Merchant already read what they wrote
       readAt: new Date(),
+      adminRead: false, // Admin has not read this yet - will trigger blinking badge on admin desk
+      adminReadAt: null,
       replyTo: replyTo || null,
       metadata: {
         merchantEmail: merchant.businessEmail,
