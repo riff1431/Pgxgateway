@@ -513,12 +513,55 @@ const MerchantSchema = new Schema<IMerchant>(
   }
 )
 
+/**
+ * Generates standardized merchant reference IDs:
+ * Format: PGX-[ADMIN]-[SERIAL] (e.g. PGX-AR-001 for ARXO, PGX-PX-001 for Direct PGX)
+ */
+export async function generateMerchantRefId(resellerId?: string): Promise<string> {
+  const rawReseller = String(resellerId || 'admin_root').toUpperCase().trim()
+  const adminCode = rawReseller.includes('ARXO')
+    ? 'AR'
+    : rawReseller === 'ADMIN_ROOT' || rawReseller === 'ROOT'
+      ? 'PX'
+      : rawReseller.replace(/[^A-Z0-9]/g, '').slice(0, 2) || 'PX'
+
+  const prefix = `PGX-${adminCode}-`
+  const regex = new RegExp(`^${prefix}(\\d+)`, 'i')
+
+  try {
+    const existing = await mongoose.model<IMerchant>('Merchant').find({ refId: regex }, { refId: 1 }).lean()
+    let maxNum = 0
+    for (const m of existing) {
+      if (m.refId) {
+        const match = m.refId.match(regex)
+        if (match && match[1]) {
+          const num = parseInt(match[1], 10)
+          if (!isNaN(num) && num > maxNum) {
+            maxNum = num
+          }
+        }
+      }
+    }
+
+    const nextNum = maxNum + 1
+    const serial = String(nextNum).padStart(3, '0')
+    return `${prefix}${serial}`
+  } catch {
+    const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase()
+    return `PGX-${adminCode}-${randomHex}`
+  }
+}
+
 // Pre-save hook: Hash password and auto-generate unique refId and apiKey
 MerchantSchema.pre('save', async function (next) {
   // Generate Ref ID if absent
   if (!this.refId) {
-    const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase()
-    this.refId = `PGX_REF_${randomHex}`
+    try {
+      this.refId = await generateMerchantRefId(this.resellerId)
+    } catch {
+      const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase()
+      this.refId = `PGX-PX-${randomHex}`
+    }
   }
 
   // Generate API key if absent

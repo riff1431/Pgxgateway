@@ -33,6 +33,8 @@ export interface ITransaction extends Document {
   customerEmail?: string
   customerName?: string
   orderId?: string
+  productName?: string
+  cloakedProductName?: string
   metadata?: Record<string, unknown>
   createdAt: Date
   updatedAt: Date
@@ -196,6 +198,14 @@ const TransactionSchema = new Schema<ITransaction>(
       trim: true,
     },
     orderId: {
+      type: String,
+      trim: true,
+    },
+    productName: {
+      type: String,
+      trim: true,
+    },
+    cloakedProductName: {
       type: String,
       trim: true,
     },

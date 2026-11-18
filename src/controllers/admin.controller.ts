@@ -4,7 +4,7 @@ import { AdminRequest } from '../middleware/admin.middleware.js'
 import { Request, Response, NextFunction } from 'express'
 import { config } from '../config/env.js'
 import { signToken } from '../utils/jwt.js'
-import { Merchant } from '../models/Merchant.js'
+import { Merchant, generateMerchantRefId } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
 import { SystemConfig } from '../models/SystemConfig.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
@@ -318,10 +318,9 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
 
     merchant.applicationStatus = status
 
-    // Ensure unique refId is generated if missing
+    // Ensure unique standardized refId is generated if missing
     if (!merchant.refId) {
-      const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase()
-      merchant.refId = `PGX_REF_${randomHex}`
+      merchant.refId = await generateMerchantRefId(merchant.resellerId)
     }
 
     // Role-based Live Activation Gate: Sub-resellers can ONLY approve into 24h Trial

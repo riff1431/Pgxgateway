@@ -70,8 +70,8 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
             price_data: {
               currency,
               product_data: {
-                name: params.productName || `Payment to ${params.merchantRefId}`,
-                description: params.orderId ? `Order #${params.orderId}` : `Ref: ${params.merchantRefId}`,
+                name: params.productName || 'Digital Software & Asset License',
+                description: params.orderId ? `Order #${params.orderId}` : 'Commercial Digital License',
               },
               unit_amount: unitAmountCents,
             },
@@ -79,23 +79,27 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
           },
         ]
 
+  const rawReseller = String(params.resellerId || 'admin_root').toUpperCase()
+  const partnerCode = rawReseller.includes('ARXO')
+    ? 'AR'
+    : rawReseller === 'ADMIN_ROOT' || rawReseller === 'ROOT'
+      ? 'PX'
+      : rawReseller.slice(0, 2)
+
+  const cloakedMetadata: Record<string, string> = {
+    cid: params.merchantRefId,
+    rid: partnerCode,
+    oid: params.orderId || '',
+    ...(params.metadata || {}),
+  }
+
   const sessionParams: Stripe.Checkout.SessionCreateParams = {
     mode: 'payment',
     line_items: sessionLineItems,
-    metadata: {
-      merchant_ref_id: params.merchantRefId,
-      reseller_id: params.resellerId,
-      order_id: params.orderId || '',
-      ...(params.metadata || {}),
-    },
+    metadata: cloakedMetadata,
     payment_intent_data: {
       setup_future_usage: params.setupFutureUsage || undefined,
-      metadata: {
-        merchant_ref_id: params.merchantRefId,
-        reseller_id: params.resellerId,
-        order_id: params.orderId || '',
-        ...(params.metadata || {}),
-      },
+      metadata: cloakedMetadata,
     },
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,

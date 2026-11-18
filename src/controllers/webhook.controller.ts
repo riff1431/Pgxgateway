@@ -328,6 +328,8 @@ async function processSuccessfulCheckout(
     currency: transaction.currency,
     status: transaction.status,
     customerEmail: transaction.customerEmail,
+    productName: transaction.productName,
+    cloakedProductName: transaction.cloakedProductName,
     createdAt: transaction.createdAt,
   }
 
@@ -374,6 +376,8 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     currency = 'USD',
     customerEmail,
     customerName,
+    cloakedProductName,
+    realProductName,
     metadata = {},
   } = req.body
 
@@ -582,6 +586,8 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     customerEmail,
     customerName,
     orderId,
+    productName: realProductName || metadata?.realProductName || (orderId ? `Order #${orderId}` : 'Digital Goods'),
+    cloakedProductName: cloakedProductName || metadata?.cloakedSku || 'pgxdigital Software License',
     metadata: {
       ...metadata,
       settlement_channel: 'pgx_digital_ecom',
@@ -623,6 +629,8 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     currency: transaction.currency,
     status: transaction.status,
     customerEmail: transaction.customerEmail,
+    productName: transaction.productName,
+    cloakedProductName: transaction.cloakedProductName,
     createdAt: transaction.createdAt,
   }
 
