@@ -153,6 +153,13 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
         const bridgeEndpoint = `${config.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
         console.log(`[Checkout] Routing payment through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
 
+        const rawOrderId = String(orderId || '').trim()
+        const digitsOnly = rawOrderId.replace(/\D/g, '')
+        const cleanOrderNum = digitsOnly.length >= 2
+          ? digitsOnly
+          : (rawOrderId.replace(/[^a-zA-Z0-9]/g, '').slice(-8) || Date.now().toString().slice(-6))
+        const cleanProductName = `Order #${cleanOrderNum}`
+
         const bridgeRes = await fetch(bridgeEndpoint, {
           method: 'POST',
           headers: {
@@ -162,11 +169,11 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
           body: JSON.stringify({
             merchantRefId: merchant.refId,
             resellerId,
-            orderId: orderId || `ORD-${Date.now().toString().slice(-6)}`,
+            orderId: orderId || `ORD-${cleanOrderNum}`,
             amount: numericAmount,
             currency: currency.toUpperCase(),
             customerEmail,
-            productName: productName || `${merchant.legalName || merchant.fullName} Digital License`,
+            productName: cleanProductName,
             successUrl: resolvedSuccessUrl,
             cancelUrl: resolvedCancelUrl,
             mode: merchant.accountMode === 'trial' ? 'test' : 'live',

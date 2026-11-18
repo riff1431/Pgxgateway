@@ -65,19 +65,27 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
           },
           quantity: item.quantity || 1,
         }))
-      : [
-          {
-            price_data: {
-              currency,
-              product_data: {
-                name: params.productName || 'Digital Software & Asset License',
-                description: params.orderId ? `Order #${params.orderId}` : 'Commercial Digital License',
+      : (() => {
+          const rawOid = String(params.orderId || '').trim()
+          const digits = rawOid.replace(/\D/g, '')
+          const cleanNum = digits.length >= 2 ? digits : (rawOid.replace(/[^a-zA-Z0-9]/g, '').slice(-8) || '')
+          const displayName = cleanNum
+            ? `Order #${cleanNum}`
+            : (params.productName && !params.productName.includes('Digital License') ? params.productName : 'Order Payment')
+          return [
+            {
+              price_data: {
+                currency,
+                product_data: {
+                  name: displayName,
+                  description: `Payment for ${displayName}`,
+                },
+                unit_amount: unitAmountCents,
               },
-              unit_amount: unitAmountCents,
+              quantity: 1,
             },
-            quantity: 1,
-          },
-        ]
+          ]
+        })()
 
   const rawReseller = String(params.resellerId || 'admin_root').toUpperCase()
   const partnerCode = rawReseller.includes('ARXO')
