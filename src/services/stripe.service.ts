@@ -101,6 +101,11 @@ export async function createStripeCheckoutSession(params: CreateSessionParams): 
       setup_future_usage: params.setupFutureUsage || undefined,
       metadata: cloakedMetadata,
     },
+    payment_method_options: {
+      card: {
+        request_three_d_secure: 'any',
+      },
+    },
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,
   }
