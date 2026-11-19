@@ -87,7 +87,12 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
     }
 
     // 3. Dynamic Provisioned Reseller Authentication from Database
-    const reseller = await ResellerConfig.findOne({ email: normalizedEmail }).select('+passwordHash')
+    const reseller = await ResellerConfig.findOne({
+      $or: [
+        { email: normalizedEmail },
+        ...(normalizedEmail === 'ceo@arxopay.com' ? [{ resellerId: 'ARXO' }] : []),
+      ],
+    }).select('+passwordHash')
     if (reseller) {
       if (reseller.status === 'suspended') {
         return res.status(403).json({
