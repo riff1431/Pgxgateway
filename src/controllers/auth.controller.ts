@@ -1,8 +1,12 @@
 import { Request, Response, NextFunction } from 'express'
+import crypto from 'crypto'
+import bcrypt from 'bcryptjs'
 import { Merchant } from '../models/Merchant.js'
+import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Notification } from '../models/Notification.js'
 import { signToken } from '../utils/jwt.js'
 import { AuthRequest } from '../middleware/auth.middleware.js'
+import { sendPasswordResetEmail, sendWelcomeEmail } from '../services/email.service.js'
 
 export async function register(req: Request, res: Response, next: NextFunction) {
   try {
@@ -95,6 +99,11 @@ export async function register(req: Request, res: Response, next: NextFunction) 
     const token = signToken({
       id: String(merchant._id),
       email: merchant.businessEmail,
+    })
+
+    // Send welcome notification email asynchronously (do not block registration)
+    sendWelcomeEmail(merchant.businessEmail, merchant.fullName, merchant.refId || 'PGX-PENDING').catch(err => {
+      console.warn('[Auth] Welcome email delivery failed:', err?.message || err)
     })
 
     res.status(201).json({
@@ -302,6 +311,131 @@ export async function changePassword(req: AuthRequest, res: Response, next: Next
     res.status(200).json({
       success: true,
       message: 'Password changed successfully.',
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Request Password Reset Link (Forgot Password)
+export async function forgotPassword(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email } = req.body
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an email address.',
+      })
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim()
+    const rawToken = crypto.randomBytes(32).toString('hex')
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
+    const expires = new Date(Date.now() + 60 * 60 * 1000) // 1 hour validity
+
+    let userFound = false
+    let recipientName: string | undefined
+
+    // 1. Check in Merchant accounts
+    const merchant = await Merchant.findOne({ businessEmail: normalizedEmail })
+    if (merchant) {
+      merchant.resetPasswordToken = tokenHash
+      merchant.resetPasswordExpires = expires
+      await merchant.save()
+      userFound = true
+      recipientName = merchant.fullName
+    } else {
+      // 2. Check in Reseller accounts
+      const reseller = await ResellerConfig.findOne({ email: normalizedEmail })
+      if (reseller) {
+        reseller.resetPasswordToken = tokenHash
+        reseller.resetPasswordExpires = expires
+        await reseller.save()
+        userFound = true
+        recipientName = reseller.name
+      }
+    }
+
+    if (userFound) {
+      const origin = req.headers.origin || 'https://pgxgateway.com'
+      const resetUrl = `${origin}/register?mode=reset&token=${rawToken}&email=${encodeURIComponent(normalizedEmail)}`
+      await sendPasswordResetEmail(normalizedEmail, resetUrl, recipientName)
+    }
+
+    // Always respond with success to prevent account enumeration
+    res.status(200).json({
+      success: true,
+      message: 'If an account exists with this email address, a password reset link has been dispatched.',
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Complete Password Reset
+export async function resetPassword(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { token, email, password } = req.body
+
+    if (!token || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token, email, and new password are required.',
+      })
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters long.',
+      })
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim()
+    const tokenHash = crypto.createHash('sha256').update(String(token).trim()).digest('hex')
+
+    // 1. Try finding in Merchant
+    const merchant = await Merchant.findOne({
+      businessEmail: normalizedEmail,
+      resetPasswordToken: tokenHash,
+      resetPasswordExpires: { $gt: new Date() },
+    }).select('+password +resetPasswordToken +resetPasswordExpires')
+
+    if (merchant) {
+      merchant.password = password
+      merchant.resetPasswordToken = undefined
+      merchant.resetPasswordExpires = undefined
+      await merchant.save()
+
+      return res.status(200).json({
+        success: true,
+        message: 'Password reset successfully. You can now sign in with your new password.',
+      })
+    }
+
+    // 2. Try finding in ResellerConfig
+    const reseller = await ResellerConfig.findOne({
+      email: normalizedEmail,
+      resetPasswordToken: tokenHash,
+      resetPasswordExpires: { $gt: new Date() },
+    }).select('+passwordHash +resetPasswordToken +resetPasswordExpires')
+
+    if (reseller) {
+      const salt = await bcrypt.genSalt(10)
+      reseller.passwordHash = await bcrypt.hash(password, salt)
+      reseller.resetPasswordToken = undefined
+      reseller.resetPasswordExpires = undefined
+      await reseller.save()
+
+      return res.status(200).json({
+        success: true,
+        message: 'Password reset successfully. You can now sign in with your new password.',
+      })
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid or expired password reset link. Please request a new one.',
     })
   } catch (error) {
     next(error)

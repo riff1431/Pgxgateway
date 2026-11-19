@@ -217,6 +217,9 @@ export interface IMerchant extends Document {
     }
   }
 
+  resetPasswordToken?: string
+  resetPasswordExpires?: Date
+
   createdAt: Date
   updatedAt: Date
 
@@ -232,6 +235,8 @@ const MerchantSchema = new Schema<IMerchant>(
     whatsapp: { type: String, trim: true },
     telegram: { type: String, trim: true },
     password: { type: String, select: false },
+    resetPasswordToken: { type: String, select: false },
+    resetPasswordExpires: { type: Date, select: false },
 
     // Step 2
     legalName: { type: String, trim: true },

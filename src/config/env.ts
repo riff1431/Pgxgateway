@@ -35,4 +35,9 @@ export const config = {
   resellerArxo: {
     apiKey: process.env.ARXO_RESELLER_API_KEY || 'pgx_reseller_arxo_live_secret_key_2026',
   },
+  mailgun: {
+    apiKey: process.env.MAILGUN_API_KEY || '',
+    domain: process.env.MAILGUN_DOMAIN || 'pgxgateway.com',
+    from: process.env.MAILGUN_FROM || 'PGX Gateway <support@pgxgateway.com>',
+  },
 }

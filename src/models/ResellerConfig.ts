@@ -5,6 +5,8 @@ export interface IResellerConfig extends Document {
   name?: string
   email?: string
   passwordHash?: string
+  resetPasswordToken?: string
+  resetPasswordExpires?: Date
   status: 'active' | 'suspended'
   stripe: {
     publishableKey: string
@@ -51,6 +53,14 @@ const ResellerConfigSchema = new Schema<IResellerConfig>(
     passwordHash: {
       type: String,
       select: false, // Hidden from queries by default for security
+    },
+    resetPasswordToken: {
+      type: String,
+      select: false,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      select: false,
     },
     status: {
       type: String,
