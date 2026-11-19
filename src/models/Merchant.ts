@@ -85,6 +85,8 @@ export interface IMerchant extends Document {
   resellerId?: string
   role?: 'sub_merchant' | 'reseller' | 'super_admin'
   apiKey?: string
+  webhookUrl?: string
+  webhookSecret?: string
   balance?: {
     grossVolume: number
     netBalance: number
@@ -332,6 +334,14 @@ const MerchantSchema = new Schema<IMerchant>(
       type: String,
       sparse: true,
       select: false,
+    },
+    webhookUrl: {
+      type: String,
+      trim: true,
+    },
+    webhookSecret: {
+      type: String,
+      trim: true,
     },
     balance: {
       grossVolume: { type: Number, default: 0 },

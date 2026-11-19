@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import crypto from 'crypto'
 import mongoose from 'mongoose'
 import { config } from '../config/env.js'
 import { Merchant } from '../models/Merchant.js'
@@ -54,6 +55,7 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
       productName,
       successUrl,
       cancelUrl,
+      webhookUrl,
       mode: requestedMode,
     } = req.body
 
@@ -85,6 +87,20 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
         success: false,
         message: `No active merchant found for reference ID ${refId}.`,
       })
+    }
+
+    // Save merchant webhook URL if passed from WooCommerce integration
+    if (webhookUrl && typeof webhookUrl === 'string' && webhookUrl.startsWith('http')) {
+      const trimmedUrl = webhookUrl.trim()
+      const updatePayload: any = { webhookUrl: trimmedUrl }
+      if (!merchant.webhookSecret) {
+        updatePayload.webhookSecret = crypto.randomBytes(24).toString('hex')
+      }
+      await Merchant.findByIdAndUpdate(merchant._id, { $set: updatePayload })
+      merchant.webhookUrl = trimmedUrl
+      if (updatePayload.webhookSecret) {
+        merchant.webhookSecret = updatePayload.webhookSecret
+      }
     }
 
     // 2. Check 24-Hour Trial & Account Status Guardrails
@@ -237,15 +253,26 @@ export async function getCheckoutSessionStatus(req: Request, res: Response, next
       })
     }
 
+    const isCompleted = txn.status === 'succeeded' || (txn.status as string) === 'completed'
+    const statusString = isCompleted ? 'completed' : txn.status
+
     return res.status(200).json({
       success: true,
+      status: statusString,
+      transactionId: txn.transactionId,
+      orderId: txn.orderId,
+      grossAmount: txn.grossAmount,
+      currency: txn.currency,
+      merchantRefId: txn.merchantRefId,
+      merchantId: String(txn.merchantId),
       transaction: {
         transactionId: txn.transactionId,
         orderId: txn.orderId,
         grossAmount: txn.grossAmount,
         currency: txn.currency,
-        status: txn.status,
+        status: statusString,
         merchantRefId: txn.merchantRefId,
+        merchantId: String(txn.merchantId),
         createdAt: txn.createdAt,
       },
     })

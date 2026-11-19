@@ -183,12 +183,12 @@ async function processSuccessfulCheckout(
   resellerConfig: InstanceType<typeof ResellerConfig>
 ) {
   const metadata = session.metadata || {}
-  const merchantRefId = (metadata.merchant_ref_id || '').toUpperCase().trim()
-  const resellerId = metadata.reseller_id || resellerConfig.resellerId || 'admin_root'
-  const orderId = metadata.order_id || ''
+  const merchantRefId = (metadata.merchant_ref_id || metadata.cid || '').toUpperCase().trim()
+  const resellerId = metadata.reseller_id || (metadata.rid === 'PRT-ARX-01' ? 'ARXO' : null) || resellerConfig.resellerId || 'admin_root'
+  const orderId = metadata.order_id || metadata.oid || ''
 
   if (!merchantRefId) {
-    console.warn(`[Stripe Webhook] Checkout completed without merchant_ref_id in metadata: ${session.id}`)
+    console.warn(`[Stripe Webhook] Checkout completed without merchantRefId (cid) in metadata: ${session.id}`)
     return
   }
 
@@ -348,6 +348,59 @@ async function processSuccessfulCheckout(
     status: transaction.status,
     createdAt: transaction.createdAt,
   })
+
+  // Outbound Server-to-Server Webhook to Merchant WooCommerce / Website
+  await dispatchMerchantWebhook(merchant, transaction, orderId)
+
+  // 4. Dispatch Outbound Server-to-Server Webhook to Merchant WooCommerce / Website
+  await dispatchMerchantWebhook(merchant, transaction, orderId)
+}
+
+async function dispatchMerchantWebhook(merchant: any, txn: any, rawOrderId: string) {
+  const targetUrl = merchant.webhookUrl || txn.metadata?.webhookUrl
+  if (!targetUrl || typeof targetUrl !== 'string' || !targetUrl.startsWith('http')) return
+
+  const webhookSecret = merchant.webhookSecret || config.ecomBridge?.secret || 'pgx_secret'
+  const timestamp = Math.floor(Date.now() / 1000)
+
+  const payload = {
+    event: 'payment.completed',
+    status: 'completed',
+    transactionId: txn.transactionId,
+    orderId: rawOrderId || txn.orderId,
+    merchantId: String(merchant._id),
+    merchantRefId: merchant.refId,
+    grossAmount: txn.grossAmount,
+    netAmount: txn.merchantNetAmount,
+    feeAmount: Number(((txn.platformFeeAmount || 0) + (txn.resellerSpreadAmount || txn.resellerProfitAmount || 0)).toFixed(2)),
+    currency: txn.currency,
+    paymentMethod: 'card',
+    timestamp,
+    metadata: {
+      source: 'woocommerce',
+      ...(txn.metadata || {}),
+    },
+  }
+
+  const rawPayload = JSON.stringify(payload)
+  const signature = crypto.createHmac('sha256', webhookSecret).update(`${timestamp}.${rawPayload}`).digest('hex')
+
+  try {
+    const res = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-PGX-Signature': signature,
+        'X-PGX-Timestamp': String(timestamp),
+        'User-Agent': 'PGX-Gateway-Webhook/1.0',
+      },
+      body: rawPayload,
+      signal: AbortSignal.timeout(10000),
+    })
+    console.log(`[Merchant Webhook] Dispatched to ${targetUrl} for order ${rawOrderId}: HTTP ${res.status}`)
+  } catch (err: any) {
+    console.warn(`[Merchant Webhook] Failed to deliver webhook to ${targetUrl}: ${err.message}`)
+  }
 }
 
 /**
@@ -645,6 +698,9 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     status: transaction.status,
     createdAt: transaction.createdAt,
   })
+
+  // Outbound Server-to-Server Webhook to Merchant WooCommerce / Website
+  await dispatchMerchantWebhook(merchant, transaction, orderId)
 
   res.status(200).json({
     success: true,
