@@ -19,6 +19,11 @@ export interface ISystemConfig extends Document {
     btcAddress: string
     usdcEthAddress: string
   }
+  mailgun?: {
+    apiKey: string
+    domain: string
+    from: string
+  }
   setupFeePriceUSD: number
   setupFeePresetAltUSD: number
   officialGithubHandle: string
@@ -75,6 +80,11 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     cryptoWallets: {
       btcAddress: { type: String, default: '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz', trim: true },
       usdcEthAddress: { type: String, default: '0x4520FBE6d418c1bAcE97A1E517e5Be2d78eb9598', trim: true },
+    },
+    mailgun: {
+      apiKey: { type: String, default: '', trim: true },
+      domain: { type: String, default: 'pgxgateway.com', trim: true },
+      from: { type: String, default: 'PGX Gateway <support@pgxgateway.com>', trim: true },
     },
     setupFeePriceUSD: {
       type: Number,

@@ -1,4 +1,5 @@
 import { config } from '../config/env.js'
+import { SystemConfig } from '../models/SystemConfig.js'
 
 export interface SendEmailOptions {
   to: string
@@ -13,9 +14,23 @@ export interface SendEmailOptions {
  */
 export async function sendEmail(options: SendEmailOptions): Promise<{ success: boolean; id?: string; error?: string }> {
   try {
-    const apiKey = config.mailgun?.apiKey
-    const domain = config.mailgun?.domain || 'pgxgateway.com'
-    const from = options.from || config.mailgun?.from || 'PGX Gateway <support@pgxgateway.com>'
+    let apiKey = config.mailgun?.apiKey
+    let domain = config.mailgun?.domain || 'pgxgateway.com'
+    let from = options.from || config.mailgun?.from || 'PGX Gateway <support@pgxgateway.com>'
+
+    if (!apiKey) {
+      // Fallback to SystemConfig in MongoDB
+      try {
+        const sys = await SystemConfig.findOne()
+        if (sys?.mailgun?.apiKey) {
+          apiKey = sys.mailgun.apiKey
+          domain = sys.mailgun.domain || domain
+          from = sys.mailgun.from || from
+        }
+      } catch {
+        // Silently continue
+      }
+    }
 
     if (!apiKey) {
       console.warn('[Email Service] Mailgun API key is not configured. Email not sent.')
