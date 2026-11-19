@@ -131,6 +131,12 @@ export async function onboardArxoMerchant(req: Request, res: Response, next: Nex
       if (merchant.applicationStatus !== 'approved') {
         merchant.applicationStatus = 'approved'
       }
+      if (!merchant.accountMode || merchant.accountMode !== 'live') {
+        merchant.accountMode = req.body.mode === 'trial' ? 'trial' : 'live'
+        if (merchant.accountMode === 'live') {
+          merchant.setupStatus = 'completed'
+        }
+      }
       await merchant.save()
 
       return res.status(200).json({
@@ -165,6 +171,8 @@ export async function onboardArxoMerchant(req: Request, res: Response, next: Nex
       phone: phone ? String(phone).trim() : '+1-000-000-0000',
       website: website ? String(website).trim() : '',
       role: 'sub_merchant',
+      accountMode: req.body.mode === 'trial' ? 'trial' : 'live',
+      setupStatus: 'completed',
       applicationStatus: 'approved',
       currentStep: 3,
       agreedToTerms: true,
