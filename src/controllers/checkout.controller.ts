@@ -241,6 +241,7 @@ export async function getCheckoutSessionStatus(req: Request, res: Response, next
       success: true,
       transaction: {
         transactionId: txn.transactionId,
+        orderId: txn.orderId,
         grossAmount: txn.grossAmount,
         currency: txn.currency,
         status: txn.status,
