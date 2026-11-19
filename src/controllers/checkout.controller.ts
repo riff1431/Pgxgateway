@@ -54,6 +54,7 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
       productName,
       successUrl,
       cancelUrl,
+      mode: requestedMode,
     } = req.body
 
     if (!refId || !amount) {
@@ -176,7 +177,9 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
             productName: cleanProductName,
             successUrl: resolvedSuccessUrl,
             cancelUrl: resolvedCancelUrl,
-            mode: merchant.accountMode === 'trial' ? 'test' : 'live',
+            mode: (requestedMode === 'test' || requestedMode === 'sandbox')
+              ? 'test'
+              : (merchant.accountMode === 'trial' ? 'test' : 'live'),
           }),
         })
 
