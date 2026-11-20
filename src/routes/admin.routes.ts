@@ -31,6 +31,7 @@ import {
   triggerAdminSubscriptionCycle,
   chargeMerchantSubscriptionDirect,
   updateMerchantBridge,
+  updateResellerDefaultBridge,
 } from '../controllers/admin.controller.js'
 import { adminProtect, superAdminOnly, platformAdminOnly } from '../middleware/admin.middleware.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
@@ -73,6 +74,7 @@ router.post('/super-resellers', superAdminOnly, createResellerTenant)
 router.patch('/super-resellers/:resellerId/status', superAdminOnly, updateResellerStatus)
 router.post('/super-resellers/:resellerId/reset-password', superAdminOnly, resetResellerPassword)
 router.patch('/super-resellers/:resellerId/fees', superAdminOnly, updateResellerFeeStructure)
+router.patch('/super-resellers/:resellerId/bridge', superAdminOnly, updateResellerDefaultBridge)
 router.patch('/super-merchants/:merchantId/reassign', superAdminOnly, reassignMerchantReseller)
 
 // Recurring Monthly Maintenance Subscriptions

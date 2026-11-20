@@ -165,7 +165,13 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
       cancelUrl || `${clientOrigin}/checkout?ref=${merchant.refId}&status=cancelled`
 
     // 2. Resolve Multi-Bridge Routing Profile (Sharding & Load Isolation)
-    const assignedBridgeKey = merchant.assignedBridge === 'leads' ? 'leads' : 'marketplace'
+    let assignedBridgeKey: 'marketplace' | 'leads' = (merchant.assignedBridge as 'marketplace' | 'leads') || 'marketplace'
+    if (!merchant.assignedBridge) {
+      const resellerConfig = await ResellerConfig.findOne({ resellerId })
+      if (resellerConfig?.defaultBridge && ['marketplace', 'leads'].includes(resellerConfig.defaultBridge)) {
+        assignedBridgeKey = resellerConfig.defaultBridge
+      }
+    }
     const activeBridge = config.bridges?.[assignedBridgeKey] || {
       id: assignedBridgeKey,
       name: assignedBridgeKey === 'leads' ? 'PGX Leads' : 'PGX MarketPlace',

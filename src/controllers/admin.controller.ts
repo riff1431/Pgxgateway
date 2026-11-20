@@ -2092,3 +2092,50 @@ export async function updateMerchantBridge(req: AdminRequest, res: Response, nex
     next(error)
   }
 }
+
+export async function updateResellerDefaultBridge(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { resellerId } = req.params
+    const { defaultBridge, applyToExistingMerchants } = req.body
+
+    if (!['marketplace', 'leads'].includes(defaultBridge)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid bridge profile. Must be "marketplace" or "leads".',
+      })
+    }
+
+    const cleanResellerId = String(resellerId).trim().toUpperCase()
+    const resellerConfig = await ResellerConfig.findOne({ resellerId: cleanResellerId })
+    if (!resellerConfig) {
+      return res.status(404).json({
+        success: false,
+        message: `Reseller tenant ${cleanResellerId} not found.`,
+      })
+    }
+
+    resellerConfig.defaultBridge = defaultBridge
+    await resellerConfig.save()
+
+    let updatedCount = 0
+    if (applyToExistingMerchants) {
+      const result = await Merchant.updateMany(
+        { resellerId: cleanResellerId },
+        { $set: { assignedBridge: defaultBridge } }
+      )
+      updatedCount = result.modifiedCount
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Tenant ${cleanResellerId} default bridge updated to ${defaultBridge}.${applyToExistingMerchants ? ` Updated ${updatedCount} existing merchants.` : ''}`,
+      data: {
+        resellerId: cleanResellerId,
+        defaultBridge,
+        updatedMerchantsCount: updatedCount,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}

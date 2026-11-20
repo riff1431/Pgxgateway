@@ -24,6 +24,7 @@ export interface IResellerConfig extends Document {
   totalPlatformFeesEarned: number
   totalResellerProfit: number
   payoutTerms?: string
+  defaultBridge?: 'marketplace' | 'leads'
   createdBy?: string
   createdAt: Date
   updatedAt: Date
@@ -84,6 +85,7 @@ const ResellerConfigSchema = new Schema<IResellerConfig>(
     totalPlatformFeesEarned: { type: Number, default: 0 },
     totalResellerProfit: { type: Number, default: 0 },
     payoutTerms: { type: String, default: 'Weekly Wire / Crypto Transfer' },
+    defaultBridge: { type: String, enum: ['marketplace', 'leads'], default: 'marketplace' },
     createdBy: { type: String, default: 'super_admin' },
   },
   {
