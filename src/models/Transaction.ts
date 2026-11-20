@@ -33,6 +33,7 @@ export interface ITransaction extends Document {
   customerEmail?: string
   customerName?: string
   orderId?: string
+  paymentRef?: string
   bridgeProfile?: 'marketplace' | 'leads'
   productName?: string
   cloakedProductName?: string
@@ -75,6 +76,12 @@ const TransactionSchema = new Schema<ITransaction>(
       type: String,
       sparse: true,
       index: true,
+    },
+    paymentRef: {
+      type: String,
+      sparse: true,
+      index: true,
+      trim: true,
     },
     stripeEventId: {
       type: String,

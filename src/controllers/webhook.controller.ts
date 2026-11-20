@@ -349,9 +349,6 @@ async function processSuccessfulCheckout(
     createdAt: transaction.createdAt,
   })
 
-  // Outbound Server-to-Server Webhook to Merchant WooCommerce / Website
-  await dispatchMerchantWebhook(merchant, transaction, orderId)
-
   // 4. Dispatch Outbound Server-to-Server Webhook to Merchant WooCommerce / Website
   await dispatchMerchantWebhook(merchant, transaction, orderId)
 }
@@ -362,11 +359,15 @@ async function dispatchMerchantWebhook(merchant: any, txn: any, rawOrderId: stri
 
   const webhookSecret = merchant.webhookSecret || config.ecomBridge?.secret || 'pgx_secret'
   const timestamp = Math.floor(Date.now() / 1000)
+  const cleanOrderNum = String(rawOrderId || txn.orderId || '').replace(/\D/g, '').slice(-4)
+  const resolvedRef = txn.paymentRef || (cleanOrderNum ? `pgx_${cleanOrderNum}` : undefined)
 
   const payload = {
     event: 'payment.completed',
     status: 'completed',
     transactionId: txn.transactionId,
+    paymentRef: resolvedRef,
+    sessionId: resolvedRef,
     orderId: rawOrderId || txn.orderId,
     merchantId: String(merchant._id),
     merchantRefId: merchant.refId,
@@ -459,7 +460,7 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     $or: [{ stripeSessionId }, ...(stripeEventId ? [{ stripeEventId }] : [])],
   })
 
-  if (existingTxn) {
+  if (existingTxn && existingTxn.status === 'succeeded') {
     console.log(`[Gateway Settlement] Duplicate event ${stripeSessionId} already processed.`)
     res.status(200).json({ received: true, duplicate: true, transactionId: existingTxn.transactionId })
     return
@@ -522,6 +523,9 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     // Transaction log
     const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
     const activeBridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
+    const setupCleanNum = String(orderId || '').replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
+    const setupPaymentRef = `pgx_${setupCleanNum}`
+
     const setupTxn = await Transaction.create({
       transactionId: `TXN_SETUP_${Date.now().toString().slice(-4)}_${txnIdSuffix}`,
       resellerId: merchant.resellerId || 'admin_root',
@@ -530,6 +534,7 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
       bridgeProfile: activeBridgeProfile,
       stripeSessionId,
       stripeEventId,
+      paymentRef: setupPaymentRef,
       currency: normCurrency,
       grossAmount,
       platformFeeAmount: grossAmount,
@@ -624,47 +629,93 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
   const transactionId = `TXN_ECOM_${Date.now().toString().slice(-4)}_${txnIdSuffix}`
   const activeBridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
+  const cleanOrderNum = String(orderId || '').replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
+  const resolvedPaymentRef = `pgx_${cleanOrderNum}`
 
-  const transaction = await Transaction.create({
-    transactionId,
-    resellerId,
-    merchantId: merchant._id,
-    merchantRefId: merchant.refId,
-    bridgeProfile: activeBridgeProfile,
-    stripeSessionId,
-    stripeEventId,
-    currency: normCurrency,
-    grossAmount,
-    grossCents,
-    platformFeeRate,
-    platformFeeAmount,
-    platformFeeCents,
-    resellerFeeRate,
-    resellerFeeAmount,
-    resellerFeeCents,
-    resellerProfitAmount,
-    resellerProfitCents,
-    merchantNetAmount,
-    merchantNetCents,
-    tier: merchantTier,
-    settlementHoldDays: holdDays,
-    settlementEligibleAt,
-    settlementStatus: 'on_hold',
-    rollingReserveRate: reserveRate,
-    rollingReserveAmount: reserveAmount,
-    rollingReserveReleaseAt,
-    rollingReserveStatus: 'locked',
-    status: 'succeeded',
-    customerEmail,
-    customerName,
-    orderId,
-    productName: realProductName || metadata?.realProductName || (orderId ? `Order #${orderId}` : 'Digital Goods'),
-    cloakedProductName: cloakedProductName || metadata?.cloakedSku || 'pgxdigital Software License',
-    metadata: {
+  let transaction: any
+  if (existingTxn && existingTxn.status === 'pending') {
+    existingTxn.transactionId = transactionId
+    existingTxn.status = 'succeeded'
+    existingTxn.stripeEventId = stripeEventId
+    existingTxn.grossCents = grossCents
+    existingTxn.grossAmount = grossAmount
+    existingTxn.platformFeeRate = platformFeeRate
+    existingTxn.platformFeeAmount = platformFeeAmount
+    existingTxn.platformFeeCents = platformFeeCents
+    existingTxn.resellerFeeRate = resellerFeeRate
+    existingTxn.resellerFeeAmount = resellerFeeAmount
+    existingTxn.resellerFeeCents = resellerFeeCents
+    existingTxn.resellerProfitAmount = resellerProfitAmount
+    existingTxn.resellerProfitCents = resellerProfitCents
+    existingTxn.merchantNetAmount = merchantNetAmount
+    existingTxn.merchantNetCents = merchantNetCents
+    existingTxn.tier = merchantTier
+    existingTxn.settlementHoldDays = holdDays
+    existingTxn.settlementEligibleAt = settlementEligibleAt
+    existingTxn.settlementStatus = 'on_hold'
+    existingTxn.rollingReserveRate = reserveRate
+    existingTxn.rollingReserveAmount = reserveAmount
+    existingTxn.rollingReserveReleaseAt = rollingReserveReleaseAt
+    existingTxn.rollingReserveStatus = 'locked'
+    existingTxn.customerEmail = customerEmail || existingTxn.customerEmail
+    existingTxn.customerName = customerName || existingTxn.customerName
+    existingTxn.orderId = orderId || existingTxn.orderId
+    existingTxn.bridgeProfile = activeBridgeProfile
+    if (!existingTxn.paymentRef) {
+      existingTxn.paymentRef = resolvedPaymentRef
+    }
+    existingTxn.productName = realProductName || metadata?.realProductName || (orderId ? `Order #${orderId}` : 'Digital Goods')
+    existingTxn.cloakedProductName = cloakedProductName || metadata?.cloakedSku || (activeBridgeProfile === 'leads' ? 'B2B Leads Package' : 'pgxdigital Software License')
+    existingTxn.metadata = {
+      ...(existingTxn.metadata || {}),
       ...metadata,
-      settlement_channel: 'pgx_digital_ecom',
-    },
-  })
+      settlement_channel: activeBridgeProfile === 'leads' ? 'pgx_leads_ecom' : 'pgx_digital_ecom',
+    }
+    await existingTxn.save()
+    transaction = existingTxn
+  } else {
+    transaction = await Transaction.create({
+      transactionId,
+      resellerId,
+      merchantId: merchant._id,
+      merchantRefId: merchant.refId,
+      bridgeProfile: activeBridgeProfile,
+      stripeSessionId,
+      stripeEventId,
+      paymentRef: resolvedPaymentRef,
+      currency: normCurrency,
+      grossAmount,
+      grossCents,
+      platformFeeRate,
+      platformFeeAmount,
+      platformFeeCents,
+      resellerFeeRate,
+      resellerFeeAmount,
+      resellerFeeCents,
+      resellerProfitAmount,
+      resellerProfitCents,
+      merchantNetAmount,
+      merchantNetCents,
+      tier: merchantTier,
+      settlementHoldDays: holdDays,
+      settlementEligibleAt,
+      settlementStatus: 'on_hold',
+      rollingReserveRate: reserveRate,
+      rollingReserveAmount: reserveAmount,
+      rollingReserveReleaseAt,
+      rollingReserveStatus: 'locked',
+      status: 'succeeded',
+      customerEmail,
+      customerName,
+      orderId,
+      productName: realProductName || metadata?.realProductName || (orderId ? `Order #${orderId}` : 'Digital Goods'),
+      cloakedProductName: cloakedProductName || metadata?.cloakedSku || (activeBridgeProfile === 'leads' ? 'B2B Leads Package' : 'pgxdigital Software License'),
+      metadata: {
+        ...metadata,
+        settlement_channel: activeBridgeProfile === 'leads' ? 'pgx_leads_ecom' : 'pgx_digital_ecom',
+      },
+    })
+  }
 
   // Update Merchant Balances
   await Merchant.findByIdAndUpdate(merchant._id, {

@@ -219,11 +219,51 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
         if (bridgeRes.ok) {
           const bridgeData = (await bridgeRes.json()) as any
           const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
+          const rawStripeSessionId = bridgeData.sessionId || bridgeData.data?.sessionId
+
           // Senior Dev Cloaking Standard:
           // Never leak raw upstream processor identifiers (Stripe cs_live_...) to sub-merchants.
           // Leaking cs_live_... prompts merchant client-side SDKs (e.g. stripe.redirectToCheckout)
           // to execute in the merchant's browser, transmitting their domain in CORS Origin headers to Stripe.
           const paymentRef = `pgx_${cleanOrderNum || Date.now().toString(36)}`
+
+          // Persist pending transaction record immediately so merchants can query status via GET /checkout/session/:id
+          try {
+            const pendingTxnId = `TXN_PEND_${Date.now().toString().slice(-4)}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+            await Transaction.create({
+              transactionId: pendingTxnId,
+              resellerId,
+              merchantId: merchant._id,
+              merchantRefId: merchant.refId,
+              bridgeProfile: assignedBridgeKey,
+              stripeSessionId: rawStripeSessionId,
+              paymentRef,
+              orderId: `ORD-${cleanOrderNum}`,
+              currency: currency.toUpperCase(),
+              grossAmount: numericAmount,
+              grossCents: Math.round(numericAmount * 100),
+              platformFeeRate: 9.0,
+              platformFeeAmount: 0,
+              platformFeeCents: 0,
+              resellerFeeRate: 12.0,
+              resellerFeeAmount: 0,
+              resellerFeeCents: 0,
+              resellerProfitAmount: 0,
+              resellerProfitCents: 0,
+              merchantNetAmount: 0,
+              merchantNetCents: 0,
+              status: 'pending',
+              customerEmail,
+              metadata: {
+                rawOrderId,
+                cleanOrderNum,
+                paymentRef,
+                checkoutUrl,
+              },
+            })
+          } catch (pendingErr: any) {
+            console.warn(`[Checkout] Non-blocking pending transaction save notice: ${pendingErr.message}`)
+          }
 
           return res.status(200).json({
             success: true,
@@ -262,19 +302,34 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
 
 export async function getCheckoutSessionStatus(req: Request, res: Response, next: NextFunction) {
   try {
-    const sessionId = String(req.params.sessionId || '').trim()
+    const rawId = String(req.params.sessionId || '').trim()
 
-    if (!sessionId) {
+    if (!rawId) {
       return res.status(400).json({ success: false, message: 'Session ID or Reference is required.' })
     }
 
-    const txn = await Transaction.findOne({
-      $or: [
-        { stripeSessionId: sessionId },
-        { transactionId: sessionId },
-        { orderId: sessionId },
-      ],
-    })
+    const digitsOnly = rawId.replace(/\D/g, '')
+    const cleanNum = digitsOnly.length >= 4 ? digitsOnly.slice(-4) : digitsOnly
+
+    const queryConditions: any[] = [
+      { paymentRef: rawId },
+      { stripeSessionId: rawId },
+      { transactionId: rawId },
+      { orderId: rawId },
+      { 'metadata.paymentRef': rawId },
+      { 'metadata.rawOrderId': rawId },
+    ]
+
+    if (cleanNum) {
+      queryConditions.push(
+        { paymentRef: `pgx_${cleanNum}` },
+        { orderId: `ORD-${cleanNum}` },
+        { orderId: cleanNum },
+        { transactionId: new RegExp(`_${cleanNum}_`, 'i') }
+      )
+    }
+
+    const txn = await Transaction.findOne({ $or: queryConditions })
 
     if (!txn) {
       return res.status(200).json({
@@ -286,10 +341,13 @@ export async function getCheckoutSessionStatus(req: Request, res: Response, next
 
     const isCompleted = txn.status === 'succeeded' || (txn.status as string) === 'completed'
     const statusString = isCompleted ? 'completed' : txn.status
+    const resolvedRef = txn.paymentRef || (txn.orderId ? `pgx_${String(txn.orderId).replace(/\D/g, '').slice(-4)}` : `pgx_${cleanNum || '0000'}`)
 
     return res.status(200).json({
       success: true,
       status: statusString,
+      paymentRef: resolvedRef,
+      sessionId: resolvedRef,
       transactionId: txn.transactionId,
       orderId: txn.orderId,
       grossAmount: txn.grossAmount,
@@ -298,6 +356,7 @@ export async function getCheckoutSessionStatus(req: Request, res: Response, next
       merchantId: String(txn.merchantId),
       transaction: {
         transactionId: txn.transactionId,
+        paymentRef: resolvedRef,
         orderId: txn.orderId,
         grossAmount: txn.grossAmount,
         currency: txn.currency,
