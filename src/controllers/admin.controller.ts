@@ -415,7 +415,12 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
       }
     }
 
-    if (assignedBridge && ['marketplace', 'leads'].includes(assignedBridge)) {
+    const isPlatformRoot =
+      req.admin?.role === 'super_admin' ||
+      req.admin?.resellerId === 'admin_root' ||
+      req.admin?.resellerId === 'super_admin_root'
+
+    if (isPlatformRoot && assignedBridge && ['marketplace', 'leads'].includes(assignedBridge)) {
       merchant.assignedBridge = assignedBridge
     }
 
@@ -2059,14 +2064,17 @@ export async function updateMerchantBridge(req: AdminRequest, res: Response, nex
       })
     }
 
-    // Multi-tenant check
-    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
-      if (merchant.resellerId !== req.admin.resellerId) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access denied.',
-        })
-      }
+    // Platform Root Security: Resellers (e.g. ARXO) are strictly blocked from changing or viewing bridge profiles
+    const isPlatformRoot =
+      req.admin?.role === 'super_admin' ||
+      req.admin?.resellerId === 'admin_root' ||
+      req.admin?.resellerId === 'super_admin_root'
+
+    if (!isPlatformRoot) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access Denied. Bridge routing and Stripe account management is strictly restricted to platform administrators.',
+      })
     }
 
     merchant.assignedBridge = assignedBridge

@@ -32,7 +32,7 @@ import {
   chargeMerchantSubscriptionDirect,
   updateMerchantBridge,
 } from '../controllers/admin.controller.js'
-import { adminProtect, superAdminOnly } from '../middleware/admin.middleware.js'
+import { adminProtect, superAdminOnly, platformAdminOnly } from '../middleware/admin.middleware.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
 import { authLimiter } from '../middleware/rateLimiter.js'
 
@@ -51,8 +51,8 @@ router.get('/stats', getAdminStats)
 router.get('/applications', getApplications)
 router.get('/applications/:id', getApplicationById)
 router.patch('/applications/:id/review', reviewApplication)
-router.patch('/applications/:id/bridge', updateMerchantBridge)
-router.put('/applications/:id/bridge', updateMerchantBridge)
+router.patch('/applications/:id/bridge', platformAdminOnly, updateMerchantBridge)
+router.put('/applications/:id/bridge', platformAdminOnly, updateMerchantBridge)
 router.post('/applications/:id/extend-trial', extendMerchantTrial)
 router.post('/applications/:id/convert-live', convertMerchantToLive)
 router.post('/applications/:id/request-live', requestMerchantLiveActivation)

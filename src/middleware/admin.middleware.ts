@@ -72,3 +72,19 @@ export function superAdminOnly(req: AdminRequest, res: Response, next: NextFunct
   }
   next()
 }
+
+// Platform Admin Only Guard (Super Admin or Platform Root Admin only; Resellers like ARXO are strictly blocked)
+export function platformAdminOnly(req: AdminRequest, res: Response, next: NextFunction) {
+  const isPlatformRoot =
+    req.admin?.role === 'super_admin' ||
+    req.admin?.resellerId === 'admin_root' ||
+    req.admin?.resellerId === 'super_admin_root'
+
+  if (!isPlatformRoot) {
+    return res.status(403).json({
+      success: false,
+      message: 'Access Denied. Bridge routing and Stripe account management is strictly restricted to platform administrators.',
+    })
+  }
+  next()
+}
