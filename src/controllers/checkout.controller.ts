@@ -170,11 +170,18 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
         const bridgeEndpoint = `${config.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
         console.log(`[Checkout] Routing payment through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
 
+        // Standardize order number to clean, uniform 4-digit format (e.g. 'Order #2831')
+        // Normalizes long 16-digit timestamps/snowflake IDs (e.g. 3340344989366968 -> 6968)
         const rawOrderId = String(orderId || '').trim()
         const digitsOnly = rawOrderId.replace(/\D/g, '')
-        const cleanOrderNum = digitsOnly.length >= 2
-          ? digitsOnly
-          : (rawOrderId.replace(/[^a-zA-Z0-9]/g, '').slice(-8) || Date.now().toString().slice(-6))
+        let cleanOrderNum = ''
+        if (digitsOnly.length >= 4) {
+          cleanOrderNum = digitsOnly.slice(-4)
+        } else if (digitsOnly.length > 0) {
+          cleanOrderNum = digitsOnly.padStart(4, '0')
+        } else {
+          cleanOrderNum = Date.now().toString().slice(-4)
+        }
         const cleanProductName = `Order #${cleanOrderNum}`
 
         const bridgeRes = await fetch(bridgeEndpoint, {
@@ -186,7 +193,7 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
           body: JSON.stringify({
             merchantRefId: merchant.refId,
             resellerId,
-            orderId: orderId || `ORD-${cleanOrderNum}`,
+            orderId: `ORD-${cleanOrderNum}`, // Senior Dev Guard: Never forward raw internal/merchant strings (e.g. ARXOPAY-CHECK-...)
             amount: numericAmount,
             currency: currency.toUpperCase(),
             customerEmail,
@@ -201,13 +208,21 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
 
         if (bridgeRes.ok) {
           const bridgeData = (await bridgeRes.json()) as any
-          const sessionId = bridgeData.sessionId || bridgeData.data?.sessionId
           const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
+          // Senior Dev Cloaking Standard:
+          // Never leak raw upstream processor identifiers (Stripe cs_live_...) to sub-merchants.
+          // Leaking cs_live_... prompts merchant client-side SDKs (e.g. stripe.redirectToCheckout)
+          // to execute in the merchant's browser, transmitting their domain in CORS Origin headers to Stripe.
+          const paymentRef = `pgx_${cleanOrderNum || Date.now().toString(36)}`
+
           return res.status(200).json({
             success: true,
-            sessionId,
+            paymentRef,
+            sessionId: paymentRef, // Sanitized internal reference; prevents Stripe.js client-side execution while preserving backward compatibility
             checkoutUrl,
-            mode: 'ecom_bridge',
+            mode: (requestedMode === 'test' || requestedMode === 'sandbox')
+              ? 'test'
+              : (merchant.accountMode === 'trial' ? 'test' : 'live'),
           })
         } else {
           const errText = await bridgeRes.text()
@@ -237,13 +252,19 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
 
 export async function getCheckoutSessionStatus(req: Request, res: Response, next: NextFunction) {
   try {
-    const sessionId = String(req.params.sessionId || '')
+    const sessionId = String(req.params.sessionId || '').trim()
 
     if (!sessionId) {
-      return res.status(400).json({ success: false, message: 'Session ID is required.' })
+      return res.status(400).json({ success: false, message: 'Session ID or Reference is required.' })
     }
 
-    const txn = await Transaction.findOne({ stripeSessionId: sessionId })
+    const txn = await Transaction.findOne({
+      $or: [
+        { stripeSessionId: sessionId },
+        { transactionId: sessionId },
+        { orderId: sessionId },
+      ],
+    })
 
     if (!txn) {
       return res.status(200).json({
