@@ -526,6 +526,10 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     const setupCleanNum = String(orderId || '').replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
     const setupPaymentRef = `pgx_${setupCleanNum}`
 
+    if (existingTxn) {
+      await Transaction.deleteOne({ _id: existingTxn._id })
+    }
+
     const setupTxn = await Transaction.create({
       transactionId: `TXN_SETUP_${Date.now().toString().slice(-4)}_${txnIdSuffix}`,
       resellerId: merchant.resellerId || 'admin_root',
