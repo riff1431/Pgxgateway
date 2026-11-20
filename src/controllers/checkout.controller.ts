@@ -164,11 +164,21 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
     const resolvedCancelUrl =
       cancelUrl || `${clientOrigin}/checkout?ref=${merchant.refId}&status=cancelled`
 
-    // 2. Primary Route: E-Commerce Payment Bridge (pgxdigital.shop)
-    if (config.ecomBridge?.enabled && config.ecomBridge?.url) {
+    // 2. Resolve Multi-Bridge Routing Profile (Sharding & Load Isolation)
+    const assignedBridgeKey = merchant.assignedBridge === 'leads' ? 'leads' : 'marketplace'
+    const activeBridge = config.bridges?.[assignedBridgeKey] || {
+      id: assignedBridgeKey,
+      name: assignedBridgeKey === 'leads' ? 'PGX Leads' : 'PGX MarketPlace',
+      domain: assignedBridgeKey === 'leads' ? 'pgxleads.shop' : 'pgxmarketplace.shop',
+      url: config.ecomBridge.url,
+      secret: config.ecomBridge.secret,
+      enabled: config.ecomBridge.enabled,
+    }
+
+    if (activeBridge.enabled && activeBridge.url) {
       try {
-        const bridgeEndpoint = `${config.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
-        console.log(`[Checkout] Routing payment through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
+        const bridgeEndpoint = `${activeBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
+        console.log(`[Checkout] Routing payment through ${activeBridge.name} [${activeBridge.domain}]: ${bridgeEndpoint} for merchant ${merchant.refId}`)
 
         // Standardize order number to clean, uniform 4-digit format (e.g. 'Order #2831')
         // Normalizes long 16-digit timestamps/snowflake IDs (e.g. 3340344989366968 -> 6968)
@@ -188,7 +198,7 @@ export async function initiateCheckout(req: Request, res: Response, next: NextFu
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-gateway-bridge-secret': config.ecomBridge.secret,
+            'x-gateway-bridge-secret': activeBridge.secret,
           },
           body: JSON.stringify({
             merchantRefId: merchant.refId,

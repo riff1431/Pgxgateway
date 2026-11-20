@@ -414,9 +414,24 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
       ? req.headers.authorization.slice(7)
       : '')
 
-  if (!secretHeader || secretHeader.trim() !== (config.ecomBridge?.secret || '').trim()) {
+  const incomingSecret = (secretHeader || '').trim()
+  const allowedSecrets = [
+    config.bridges?.marketplace?.secret?.trim(),
+    config.bridges?.leads?.secret?.trim(),
+    config.ecomBridge?.secret?.trim(),
+  ].filter(Boolean) as string[]
+
+  if (!incomingSecret || !allowedSecrets.includes(incomingSecret)) {
     res.status(401).json({ error: 'Unauthorized: Invalid or missing gateway bridge secret' })
     return
+  }
+
+  // Detect bridgeProfile
+  let detectedBridge: 'marketplace' | 'leads' = 'marketplace'
+  if (config.bridges?.leads?.secret && incomingSecret === config.bridges.leads.secret.trim()) {
+    detectedBridge = 'leads'
+  } else if (req.body.bridgeProfile === 'leads' || req.body.bridgeProfile === 'marketplace') {
+    detectedBridge = req.body.bridgeProfile
   }
 
   const {
@@ -506,11 +521,13 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
 
     // Transaction log
     const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
+    const activeBridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
     const setupTxn = await Transaction.create({
       transactionId: `TXN_SETUP_${Date.now().toString().slice(-4)}_${txnIdSuffix}`,
       resellerId: merchant.resellerId || 'admin_root',
       merchantId: merchant._id,
       merchantRefId: merchant.refId || String(merchant._id),
+      bridgeProfile: activeBridgeProfile,
       stripeSessionId,
       stripeEventId,
       currency: normCurrency,
@@ -606,12 +623,14 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
 
   const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
   const transactionId = `TXN_ECOM_${Date.now().toString().slice(-4)}_${txnIdSuffix}`
+  const activeBridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
 
   const transaction = await Transaction.create({
     transactionId,
     resellerId,
     merchantId: merchant._id,
     merchantRefId: merchant.refId,
+    bridgeProfile: activeBridgeProfile,
     stripeSessionId,
     stripeEventId,
     currency: normCurrency,

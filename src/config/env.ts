@@ -28,9 +28,27 @@ export const config = {
     secretKey: process.env.ADMIN_SECRET_KEY || 'pgx_admin_secret_super_secure_key_2026',
   },
   ecomBridge: {
-    url: process.env.ECOM_BRIDGE_URL || 'http://localhost:4000',
+    url: process.env.ECOM_BRIDGE_URL || 'https://api.pgxmarketplace.shop',
     secret: process.env.GATEWAY_BRIDGE_SECRET || 'pgx-digital-super-secret-gateway-bridge-key-2026',
     enabled: process.env.ENABLE_ECOM_BRIDGE !== 'false',
+  },
+  bridges: {
+    marketplace: {
+      id: 'marketplace' as const,
+      name: 'PGX MarketPlace (Stripe #1 - Digital SaaS)',
+      domain: 'pgxmarketplace.shop',
+      url: process.env.ECOM_BRIDGE_1_URL || process.env.ECOM_BRIDGE_URL || 'https://api.pgxmarketplace.shop',
+      secret: process.env.GATEWAY_BRIDGE_1_SECRET || process.env.GATEWAY_BRIDGE_SECRET || 'pgx-digital-super-secret-gateway-bridge-key-2026',
+      enabled: process.env.ENABLE_BRIDGE_1 !== 'false',
+    },
+    leads: {
+      id: 'leads' as const,
+      name: 'PGX Leads (Stripe #2 - B2B Intel)',
+      domain: 'pgxleads.shop',
+      url: process.env.ECOM_BRIDGE_2_URL || process.env.ECOM_BRIDGE_LEADS_URL || 'https://pgxleads.shop',
+      secret: process.env.GATEWAY_BRIDGE_2_SECRET || process.env.GATEWAY_BRIDGE_LEADS_SECRET || 'pgx-leads-super-secret-gateway-bridge-key-2026',
+      enabled: process.env.ENABLE_BRIDGE_2 !== 'false',
+    },
   },
   resellerArxo: {
     apiKey: process.env.ARXO_RESELLER_API_KEY || 'pgx_reseller_arxo_live_secret_key_2026',

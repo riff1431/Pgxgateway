@@ -288,7 +288,7 @@ export async function getApplicationById(req: Request, res: Response, next: Next
 export async function reviewApplication(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
-    const { status, offer, notes, approveMode, trialHours } = req.body
+    const { status, offer, notes, approveMode, trialHours, assignedBridge } = req.body
 
     if (!['approved', 'rejected', 'under_review'].includes(status)) {
       return res.status(400).json({
@@ -413,6 +413,10 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
           merchant.cryptoPayment.amount = parsedFee
         }
       }
+    }
+
+    if (assignedBridge && ['marketplace', 'leads'].includes(assignedBridge)) {
+      merchant.assignedBridge = assignedBridge
     }
 
     await merchant.save()
@@ -2029,5 +2033,54 @@ export async function chargeMerchantSubscriptionDirect(req: AdminRequest, res: R
       success: false,
       message: error?.message || 'Failed to charge merchant subscription.',
     })
+  }
+}
+
+// ----------------------------------------------------
+// 13. Bridge Sharding & Routing Management
+// ----------------------------------------------------
+export async function updateMerchantBridge(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params
+    const { assignedBridge } = req.body
+
+    if (!['marketplace', 'leads'].includes(assignedBridge)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid bridge profile. Must be "marketplace" or "leads".',
+      })
+    }
+
+    const merchant = await Merchant.findById(id)
+    if (!merchant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Merchant application not found.',
+      })
+    }
+
+    // Multi-tenant check
+    if (req.admin?.role === 'admin' && req.admin.resellerId && req.admin.resellerId !== 'admin_root') {
+      if (merchant.resellerId !== req.admin.resellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied.',
+        })
+      }
+    }
+
+    merchant.assignedBridge = assignedBridge
+    await merchant.save()
+
+    res.status(200).json({
+      success: true,
+      message: `Merchant bridge successfully updated to ${assignedBridge}.`,
+      data: {
+        merchantId: merchant._id,
+        assignedBridge: merchant.assignedBridge,
+      },
+    })
+  } catch (error) {
+    next(error)
   }
 }
