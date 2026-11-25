@@ -5,6 +5,7 @@ import { config } from '../config/env.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { SystemConfig } from '../models/SystemConfig.js'
 import { Merchant } from '../models/Merchant.js'
+import { Invoice } from '../models/Invoice.js'
 import { Transaction } from '../models/Transaction.js'
 import { Notification } from '../models/Notification.js'
 import { constructWebhookEvent } from '../services/stripe.service.js'
@@ -60,10 +61,24 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
   }
 
   // 3. Process Payment Completion Events
-  if (event.type === 'checkout.session.completed') {
+  if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
     const session = event.data.object as Stripe.Checkout.Session
+    if (session.payment_status && session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+      console.log(`[Stripe Webhook] Session ${session.id} has payment_status=${session.payment_status}; awaiting async settlement.`)
+      res.status(200).json({ received: true, pendingAsync: true })
+      return
+    }
     if (session.metadata?.type === 'setup_fee') {
       await processSetupFeeCheckout(session, event.id)
+    } else if (session.metadata?.type === 'weekly_invoice') {
+      await processWeeklyInvoiceSettlement({
+        invoiceId: session.metadata?.invoiceId,
+        stripeSessionId: session.id,
+        stripeEventId: event.id,
+        grossAmount: (session.amount_total || 0) / 100,
+        currency: (session.currency || 'USD').toUpperCase(),
+        customerEmail: session.customer_details?.email || session.customer_email || undefined,
+      })
     } else {
       await processSuccessfulCheckout(session, event.id, resellerConfig)
     }
@@ -476,7 +491,13 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   const normCurrency = String(currency).toUpperCase()
 
   // Check if this settlement is a Setup Fee payment through the E-Commerce Bridge
-  const isSetupFee = (orderId && String(orderId).startsWith('SETUP-')) || metadata?.type === 'setup_fee'
+  const effectiveOrderId = existingTxn?.orderId || orderId
+  const effectiveType = existingTxn?.metadata?.type || metadata?.type
+  const isSetupFee =
+    (effectiveOrderId && String(effectiveOrderId).startsWith('SETUP-')) ||
+    effectiveType === 'setup_fee' ||
+    Boolean(merchant.setupStripeSessionId && merchant.setupStripeSessionId === stripeSessionId)
+
   if (isSetupFee) {
     console.log(`[Gateway Settlement] Processing Setup Fee via bridge for merchant ${merchant.fullName} (${merchant.refId})`)
 
@@ -572,6 +593,30 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
 
     res.status(200).json({ received: true, setupFeeProcessed: true, transactionId: setupTxn.transactionId })
     return
+  }
+
+  // Check if this settlement is a Weekly Invoice payment through the E-Commerce Bridge
+  const isWeeklyInvoice =
+    effectiveType === 'weekly_invoice' ||
+    (effectiveOrderId && String(effectiveOrderId).startsWith('INV-'))
+
+  if (isWeeklyInvoice) {
+    const invoiceResult = await processWeeklyInvoiceSettlement({
+      invoiceId: existingTxn?.metadata?.invoiceId || metadata?.invoiceId,
+      invoiceNumber: effectiveOrderId,
+      stripeSessionId,
+      stripeEventId,
+      grossAmount,
+      currency: normCurrency,
+      customerEmail: customerEmail || merchant.businessEmail,
+      bridgeProfile: detectedBridge || merchant.assignedBridge || 'marketplace',
+      existingTxn,
+    })
+
+    if (invoiceResult) {
+      res.status(200).json({ received: true, invoiceProcessed: true, ...invoiceResult })
+      return
+    }
   }
 
   let resellerConfig = await ResellerConfig.findOne({ resellerId })
@@ -782,4 +827,105 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     grossAmount,
     merchantNetAmount,
   })
+}
+
+async function processWeeklyInvoiceSettlement(params: {
+  invoiceId?: string
+  invoiceNumber?: string
+  stripeSessionId: string
+  stripeEventId?: string
+  grossAmount: number
+  currency: string
+  customerEmail?: string
+  bridgeProfile?: 'marketplace' | 'leads'
+  existingTxn?: any
+}) {
+  const invoice = await Invoice.findOne(
+    params.invoiceId
+      ? { _id: params.invoiceId }
+      : {
+          $or: [
+            { stripeSessionId: params.stripeSessionId },
+            ...(params.invoiceNumber ? [{ invoiceNumber: params.invoiceNumber }] : []),
+          ],
+        }
+  )
+
+  if (!invoice) {
+    console.warn(`[Invoice Settlement] Invoice not found for session ${params.stripeSessionId}`)
+    return null
+  }
+
+  if (invoice.status !== 'paid') {
+    invoice.status = 'paid'
+    invoice.paidAt = new Date()
+    invoice.paymentMethod = 'stripe'
+    invoice.stripeSessionId = params.stripeSessionId
+    await invoice.save()
+
+    if (invoice.resellerId && invoice.resellerId !== 'admin_root' && invoice.resellerShareAmount > 0) {
+      await ResellerConfig.findOneAndUpdate(
+        { resellerId: invoice.resellerId },
+        {
+          $inc: {
+            prepaidBalance: invoice.resellerShareAmount,
+            totalResellerProfit: invoice.resellerShareAmount,
+          },
+        }
+      )
+    }
+
+    await Notification.create({
+      merchantId: invoice.merchantId,
+      title: `Invoice ${invoice.invoiceNumber} Paid`,
+      content: `Your invoice payment of $${params.grossAmount.toFixed(2)} ${params.currency} has been confirmed.`,
+      type: 'system',
+    })
+
+    emitToMerchant(String(invoice.merchantId), 'invoice_status_updated', {
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      status: invoice.status,
+    })
+
+    emitToAdmins(WS_EVENTS.PAYMENT_RECEIVED, {
+      merchantId: invoice.merchantId,
+      amount: params.grossAmount,
+      type: 'weekly_invoice',
+      invoiceNumber: invoice.invoiceNumber,
+    })
+  }
+
+  if (params.existingTxn) {
+    await Transaction.deleteOne({ _id: params.existingTxn._id })
+  }
+
+  const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
+  const cleanInvNum = invoice.invoiceNumber.replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
+  const merchant = await Merchant.findById(invoice.merchantId).select('refId')
+
+  const invoiceTxn = await Transaction.create({
+    transactionId: `TXN_INV_${Date.now().toString().slice(-4)}_${txnIdSuffix}`,
+    resellerId: invoice.resellerId || 'admin_root',
+    merchantId: invoice.merchantId,
+    merchantRefId: merchant?.refId || String(invoice.merchantId),
+    bridgeProfile: params.bridgeProfile || 'marketplace',
+    stripeSessionId: params.stripeSessionId,
+    stripeEventId: params.stripeEventId,
+    paymentRef: `pgx_${cleanInvNum}`,
+    currency: params.currency,
+    grossAmount: params.grossAmount,
+    platformFeeAmount: invoice.platformRetainedAmount || params.grossAmount,
+    resellerSpreadAmount: invoice.resellerShareAmount || 0,
+    merchantNetAmount: 0,
+    status: 'succeeded',
+    customerEmail: params.customerEmail || invoice.merchantEmail,
+    orderId: invoice.invoiceNumber,
+    description: `Weekly Service Invoice (${invoice.invoiceNumber})`,
+  })
+
+  return {
+    transactionId: invoiceTxn.transactionId,
+    invoiceNumber: invoice.invoiceNumber,
+  }
 }

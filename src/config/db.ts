@@ -10,6 +10,11 @@ try {
 }
 
 export async function connectDB(): Promise<void> {
+  if (!config.mongodbUri) {
+    console.error('[MongoDB] FATAL: MONGODB_URI environment variable is not set.')
+    process.exit(1)
+  }
+
   try {
     const conn = await mongoose.connect(config.mongodbUri, {
       maxPoolSize: 20,

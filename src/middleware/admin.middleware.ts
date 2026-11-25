@@ -14,7 +14,7 @@ export interface AdminRequest extends Request {
 export function adminProtect(req: AdminRequest, res: Response, next: NextFunction) {
   // 1. Check for x-admin-key header
   const adminKey = req.headers['x-admin-key']
-  if (adminKey && adminKey === config.admin.secretKey) {
+  if (config.admin.secretKey && adminKey && adminKey === config.admin.secretKey) {
     req.admin = {
       id: 'admin_root',
       email: config.admin.email,

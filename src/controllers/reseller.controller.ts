@@ -15,7 +15,7 @@ export function authenticateResellerKey(req: Request, res: Response, next: NextF
 
   const expectedKey = config.resellerArxo.apiKey.trim()
 
-  if (!apiKey || apiKey.trim() !== expectedKey) {
+  if (!expectedKey || !apiKey || apiKey.trim() !== expectedKey) {
     return res.status(401).json({
       success: false,
       error: 'Unauthorized: Invalid or missing reseller API key.',

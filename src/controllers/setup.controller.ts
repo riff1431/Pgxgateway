@@ -1,9 +1,11 @@
 import { Request, Response, NextFunction } from 'express'
+import crypto from 'node:crypto'
 import { SystemConfig, ISystemConfig } from '../models/SystemConfig.js'
 import { Merchant } from '../models/Merchant.js'
 import { SetupMessage } from '../models/SetupMessage.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Notification } from '../models/Notification.js'
+import { Transaction } from '../models/Transaction.js'
 import { createStripeCheckoutSession, getStripeClient, getOrCreateStripeCustomer } from '../services/stripe.service.js'
 import { parseMonthlyFee } from '../services/subscription.service.js'
 import { emitToAdmins, emitToMerchant, WS_EVENTS } from '../services/socket.service.js'
@@ -365,6 +367,7 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
       const bridgeEndpoint = `${envConfig.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
       console.log(`[Setup Checkout] Routing setup fee payment strictly through E-Commerce Bridge: ${bridgeEndpoint} for merchant ${merchant.refId}`)
 
+      const setupOrderId = `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`
       const bridgeRes = await fetch(bridgeEndpoint, {
         method: 'POST',
         headers: {
@@ -374,7 +377,7 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
         body: JSON.stringify({
           merchantRefId: merchant.refId || String(merchant._id),
           resellerId: merchant.resellerId || 'admin_root',
-          orderId: `SETUP-${merchant._id.toString().slice(-6).toUpperCase()}`,
+          orderId: setupOrderId,
           amount: totalAmountWithSurcharge,
           currency: 'USD',
           customerEmail: merchant.businessEmail,
@@ -390,6 +393,47 @@ export async function createSetupCheckoutSession(req: AuthRequest, res: Response
         const bridgeData = (await bridgeRes.json()) as any
         const sessionId = bridgeData.sessionId || bridgeData.data?.sessionId
         const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
+
+        // Persist pending setup fee transaction keyed by stripeSessionId so
+        // gateway-settle reliably identifies SETUP- payments even when the bridge
+        // normalizes Stripe metadata oid to ORD-XXXX.
+        if (sessionId) {
+          const setupCleanNum = setupOrderId.replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
+          try {
+            await Transaction.create({
+              transactionId: `TXN_SETUP_PEND_${Date.now().toString().slice(-4)}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+              resellerId: merchant.resellerId || 'admin_root',
+              merchantId: merchant._id,
+              merchantRefId: merchant.refId || String(merchant._id),
+              bridgeProfile: 'marketplace',
+              stripeSessionId: sessionId,
+              paymentRef: `pgx_${setupCleanNum}`,
+              orderId: setupOrderId,
+              currency: 'USD',
+              grossAmount: totalAmountWithSurcharge,
+              grossCents: Math.round(totalAmountWithSurcharge * 100),
+              platformFeeRate: 100,
+              platformFeeAmount: totalAmountWithSurcharge,
+              platformFeeCents: Math.round(totalAmountWithSurcharge * 100),
+              resellerFeeRate: 0,
+              resellerFeeAmount: 0,
+              resellerFeeCents: 0,
+              resellerProfitAmount: 0,
+              resellerProfitCents: 0,
+              merchantNetAmount: 0,
+              merchantNetCents: 0,
+              status: 'pending',
+              customerEmail: merchant.businessEmail,
+              metadata: {
+                type: 'setup_fee',
+                setupOrderId,
+              },
+            })
+          } catch (pendingErr: any) {
+            console.warn(`[Setup Checkout] Non-blocking pending setup transaction save notice: ${pendingErr.message}`)
+          }
+        }
+
         return res.status(200).json({
           success: true,
           checkoutUrl,

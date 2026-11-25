@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import crypto from 'crypto'
+import { config as envConfig } from '../config/env.js'
 import { Invoice, IInvoice, InvoiceStatus } from '../models/Invoice.js'
 import { Merchant } from '../models/Merchant.js'
 import { SystemConfig } from '../models/SystemConfig.js'
@@ -60,6 +61,102 @@ export async function payInvoiceViaStripe(req: AuthRequest, res: Response, next:
     }
 
     const config = await SystemConfig.findOne()
+    const merchant = await Merchant.findById(merchantId)
+
+    const appOrigin = req.headers.origin || 'https://pgxgateway.com'
+    const successUrl = `${appOrigin}/dashboard?tab=invoices&invoice_paid=success&invoice=${invoice.invoiceNumber}`
+    const cancelUrl = `${appOrigin}/dashboard?tab=invoices&invoice_paid=cancelled`
+
+    // Route through E-Commerce Bridge when enabled so Stripe sees no PGX Gateway origin
+    if (envConfig.ecomBridge?.enabled && envConfig.ecomBridge?.url) {
+      const bridgeEndpoint = `${envConfig.ecomBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
+      const bridgeRes = await fetch(bridgeEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gateway-bridge-secret': envConfig.ecomBridge.secret,
+        },
+        body: JSON.stringify({
+          merchantRefId: merchant?.refId || String(merchantId),
+          resellerId: invoice.resellerId || 'admin_root',
+          orderId: invoice.invoiceNumber,
+          amount: invoice.payableAmount,
+          currency: 'USD',
+          customerEmail: invoice.merchantEmail,
+          customerName: merchant?.legalName || merchant?.fullName,
+          productName: `Service Settlement ${invoice.invoiceNumber}`,
+          successUrl,
+          cancelUrl,
+          mode: config?.stripe?.mode === 'live' ? 'live' : 'test',
+        }),
+      })
+
+      if (!bridgeRes.ok) {
+        const errText = await bridgeRes.text()
+        return res.status(bridgeRes.status).json({
+          success: false,
+          message: `E-Commerce payment bridge error: ${errText || bridgeRes.statusText}`,
+        })
+      }
+
+      const bridgeData = (await bridgeRes.json()) as any
+      const rawSessionId = bridgeData.sessionId || bridgeData.data?.sessionId
+      const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
+
+      if (rawSessionId) {
+        const cleanInvNum = invoice.invoiceNumber.replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
+        try {
+          await Transaction.create({
+            transactionId: `TXN_INV_PEND_${Date.now().toString().slice(-4)}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+            resellerId: invoice.resellerId || 'admin_root',
+            merchantId,
+            merchantRefId: merchant?.refId || String(merchantId),
+            bridgeProfile: 'marketplace',
+            stripeSessionId: rawSessionId,
+            paymentRef: `pgx_${cleanInvNum}`,
+            orderId: invoice.invoiceNumber,
+            currency: 'USD',
+            grossAmount: invoice.payableAmount,
+            grossCents: Math.round(invoice.payableAmount * 100),
+            platformFeeRate: 100,
+            platformFeeAmount: invoice.payableAmount,
+            platformFeeCents: Math.round(invoice.payableAmount * 100),
+            resellerFeeRate: 0,
+            resellerFeeAmount: 0,
+            resellerFeeCents: 0,
+            resellerProfitAmount: 0,
+            resellerProfitCents: 0,
+            merchantNetAmount: 0,
+            merchantNetCents: 0,
+            status: 'pending',
+            customerEmail: invoice.merchantEmail,
+            metadata: {
+              type: 'weekly_invoice',
+              invoiceId: invoice._id.toString(),
+              invoiceNumber: invoice.invoiceNumber,
+              merchantId: merchantId.toString(),
+            },
+          })
+        } catch (pendingErr: any) {
+          console.warn(`[Invoice Checkout] Non-blocking pending invoice transaction save notice: ${pendingErr.message}`)
+        }
+      }
+
+      invoice.stripeSessionId = rawSessionId
+      invoice.paymentMethod = 'stripe'
+      invoice.status = 'pending'
+      await invoice.save()
+
+      return res.status(200).json({
+        success: true,
+        checkoutUrl,
+        sessionId: rawSessionId,
+        invoiceNumber: invoice.invoiceNumber,
+        amount: invoice.payableAmount,
+        mode: 'ecom_bridge',
+      })
+    }
+
     if (!config?.stripe?.secretKey || !config?.stripe?.isConfigured) {
       return res.status(400).json({
         success: false,
@@ -67,16 +164,12 @@ export async function payInvoiceViaStripe(req: AuthRequest, res: Response, next:
       })
     }
 
-    const appOrigin = req.headers.origin || 'http://localhost:5173'
-    const successUrl = `${appOrigin}/dashboard?tab=invoices&invoice_paid=success&invoice=${invoice.invoiceNumber}`
-    const cancelUrl = `${appOrigin}/dashboard?tab=invoices&invoice_paid=cancelled`
-
     const session = await createStripeCheckoutSession({
       secretKey: config.stripe.secretKey,
       amount: invoice.payableAmount,
       currency: 'usd',
       productName: `PGX Gateway Weekly Service Fee (${invoice.invoiceNumber})`,
-      merchantRefId: String(merchantId),
+      merchantRefId: merchant?.refId || String(merchantId),
       resellerId: invoice.resellerId || 'admin_root',
       customerEmail: invoice.merchantEmail,
       orderId: invoice.invoiceNumber,
