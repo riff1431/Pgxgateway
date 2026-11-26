@@ -6,6 +6,7 @@ import { ResellerConfig } from '../models/ResellerConfig.js'
 import { SystemConfig } from '../models/SystemConfig.js'
 import { Merchant } from '../models/Merchant.js'
 import { Invoice } from '../models/Invoice.js'
+import { PaymentLink } from '../models/PaymentLink.js'
 import { Transaction } from '../models/Transaction.js'
 import { Notification } from '../models/Notification.js'
 import { constructWebhookEvent } from '../services/stripe.service.js'
@@ -784,6 +785,21 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
         totalResellerProfit: resellerProfitAmount,
       },
     })
+  }
+
+  // Update Payment Link metrics (and close one-time links upon settlement)
+  const paymentLinkId = transaction.metadata?.paymentLinkId || metadata?.paymentLinkId
+  if (paymentLinkId) {
+    const linkDoc = await PaymentLink.findById(paymentLinkId)
+    if (linkDoc) {
+      linkDoc.totalPayments = (linkDoc.totalPayments || 0) + 1
+      linkDoc.totalVolume = Math.round(((linkDoc.totalVolume || 0) + grossAmount) * 100) / 100
+      linkDoc.lastPaidAt = new Date()
+      if (!linkDoc.reusable) {
+        linkDoc.status = 'completed'
+      }
+      await linkDoc.save()
+    }
   }
 
   console.log(

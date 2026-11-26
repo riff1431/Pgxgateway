@@ -10,6 +10,7 @@ import setupRoutes from './setup.routes.js'
 import invoiceRoutes from './invoice.routes.js'
 import resellerRoutes from './reseller.routes.js'
 import reviewRoutes from './review.routes.js'
+import paymentLinkRoutes from './paymentLink.routes.js'
 
 const apiRouter = Router()
 
@@ -22,6 +23,7 @@ apiRouter.use('/merchants', merchantRoutes)
 apiRouter.use('/dashboard', dashboardRoutes)
 apiRouter.use('/admin', adminRoutes)
 apiRouter.use('/checkout', checkoutRoutes)
+apiRouter.use('/payment-links', paymentLinkRoutes)
 apiRouter.use('/setup', setupRoutes)
 apiRouter.use('/invoices', invoiceRoutes)
 apiRouter.use('/reseller', resellerRoutes)
