@@ -3,6 +3,7 @@ import { runDailySubscriptionCycle } from './subscription.service.js'
 import { Transaction } from '../models/Transaction.js'
 import { Merchant } from '../models/Merchant.js'
 import { emitToMerchant, WS_EVENTS } from './socket.service.js'
+import { reconcilePendingTransactions } from '../controllers/webhook.controller.js'
 
 let isCronRunning = false
 
@@ -79,6 +80,18 @@ export function initCronJobs() {
   })
 
   console.log('[Cron Service] Registered Daily Subscription & Settlement Evaluation Job (00:00 UTC).')
+
+  // Reconcile stuck pending transactions (declined/blocked/expired in Stripe) every 15 minutes
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const { checked, markedFailed } = await reconcilePendingTransactions(30)
+      if (markedFailed > 0) {
+        console.log(`[Cron Service] Reconciled ${checked} pending transactions; marked ${markedFailed} as failed.`)
+      }
+    } catch (error) {
+      console.error('[Cron Service] Error reconciling pending transactions:', error)
+    }
+  })
 }
 
 export async function triggerManualSubscriptionCycle() {

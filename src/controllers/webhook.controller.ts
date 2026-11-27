@@ -86,6 +86,42 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
   } else if (event.type === 'payment_intent.succeeded') {
     const paymentIntent = event.data.object as Stripe.PaymentIntent
     console.log(`[Stripe Webhook] PaymentIntent succeeded: ${paymentIntent.id}`)
+  } else if (event.type === 'checkout.session.async_payment_failed' || event.type === 'checkout.session.expired') {
+    const session = event.data.object as Stripe.Checkout.Session
+    const failureReason =
+      event.type === 'checkout.session.expired'
+        ? 'Checkout session expired without payment'
+        : 'Async payment failed in Stripe'
+    await markTransactionFailed({
+      stripeSessionId: session.id,
+      stripeEventId: event.id,
+      merchantRefId: session.metadata?.merchantRefId || session.metadata?.cid,
+      resellerId: session.metadata?.resellerId || session.metadata?.rid || 'admin_root',
+      orderId: session.metadata?.orderId || session.metadata?.oid,
+      grossAmount: (session.amount_total || 0) / 100,
+      currency: (session.currency || 'USD').toUpperCase(),
+      customerEmail: session.customer_details?.email || session.customer_email || undefined,
+      customerName: session.customer_details?.name || undefined,
+      failureReason,
+      declineCode: event.type,
+    })
+  } else if (event.type === 'payment_intent.payment_failed') {
+    const paymentIntent = event.data.object as Stripe.PaymentIntent
+    const lastErr = paymentIntent.last_payment_error
+    const failureReason = lastErr?.message || 'Card payment declined or blocked by Stripe'
+    const declineCode = lastErr?.decline_code || lastErr?.code || 'payment_failed'
+    await markTransactionFailed({
+      stripePaymentIntentId: paymentIntent.id,
+      stripeEventId: event.id,
+      merchantRefId: paymentIntent.metadata?.merchantRefId || paymentIntent.metadata?.cid,
+      resellerId: paymentIntent.metadata?.resellerId || paymentIntent.metadata?.rid || 'admin_root',
+      orderId: paymentIntent.metadata?.orderId || paymentIntent.metadata?.oid,
+      grossAmount: (paymentIntent.amount || 0) / 100,
+      currency: (paymentIntent.currency || 'USD').toUpperCase(),
+      customerEmail: paymentIntent.receipt_email || undefined,
+      failureReason,
+      declineCode,
+    })
   }
 
   res.status(200).json({ received: true })
@@ -377,10 +413,11 @@ async function dispatchMerchantWebhook(merchant: any, txn: any, rawOrderId: stri
   const timestamp = Math.floor(Date.now() / 1000)
   const cleanOrderNum = String(rawOrderId || txn.orderId || '').replace(/\D/g, '').slice(-4)
   const resolvedRef = txn.paymentRef || (cleanOrderNum ? `pgx_${cleanOrderNum}` : undefined)
+  const isFailed = txn.status === 'failed'
 
   const payload = {
-    event: 'payment.completed',
-    status: 'completed',
+    event: isFailed ? 'payment.failed' : 'payment.completed',
+    status: isFailed ? 'failed' : 'completed',
     transactionId: txn.transactionId,
     paymentRef: resolvedRef,
     sessionId: resolvedRef,
@@ -388,10 +425,13 @@ async function dispatchMerchantWebhook(merchant: any, txn: any, rawOrderId: stri
     merchantId: String(merchant._id),
     merchantRefId: merchant.refId,
     grossAmount: txn.grossAmount,
-    netAmount: txn.merchantNetAmount,
-    feeAmount: Number(((txn.platformFeeAmount || 0) + (txn.resellerSpreadAmount || txn.resellerProfitAmount || 0)).toFixed(2)),
+    netAmount: isFailed ? 0 : txn.merchantNetAmount,
+    feeAmount: isFailed
+      ? 0
+      : Number(((txn.platformFeeAmount || 0) + (txn.resellerSpreadAmount || txn.resellerProfitAmount || 0)).toFixed(2)),
     currency: txn.currency,
     paymentMethod: 'card',
+    failureReason: isFailed ? (txn.metadata?.failureReason as string | undefined) : undefined,
     timestamp,
     metadata: {
       source: 'woocommerce',
@@ -452,7 +492,9 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   }
 
   const {
+    status: incomingStatus = 'succeeded',
     stripeSessionId,
+    stripePaymentIntentId,
     stripeEventId,
     merchantRefId,
     resellerId = 'admin_root',
@@ -463,8 +505,34 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     customerName,
     cloakedProductName,
     realProductName,
+    failureReason,
+    declineCode,
     metadata = {},
   } = req.body
+
+  if (incomingStatus === 'failed') {
+    const result = await markTransactionFailed({
+      stripeSessionId,
+      stripePaymentIntentId,
+      stripeEventId,
+      merchantRefId,
+      resellerId,
+      orderId,
+      grossAmount: typeof grossAmount === 'number' ? grossAmount : 0,
+      currency,
+      customerEmail,
+      customerName,
+      cloakedProductName,
+      realProductName,
+      bridgeProfile: detectedBridge,
+      failureReason,
+      declineCode,
+      metadata,
+    })
+
+    res.status(200).json({ received: true, ...result })
+    return
+  }
 
   if (!merchantRefId || typeof grossAmount !== 'number') {
     res.status(400).json({ error: 'Missing required settlement parameters (merchantRefId, grossAmount)' })
@@ -683,7 +751,7 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   const resolvedPaymentRef = `pgx_${cleanOrderNum}`
 
   let transaction: any
-  if (existingTxn && existingTxn.status === 'pending') {
+  if (existingTxn && (existingTxn.status === 'pending' || existingTxn.status === 'failed')) {
     existingTxn.transactionId = transactionId
     existingTxn.status = 'succeeded'
     existingTxn.stripeEventId = stripeEventId
@@ -944,4 +1012,279 @@ async function processWeeklyInvoiceSettlement(params: {
     transactionId: invoiceTxn.transactionId,
     invoiceNumber: invoice.invoiceNumber,
   }
+}
+
+export async function markTransactionFailed(params: {
+  stripeSessionId?: string
+  stripePaymentIntentId?: string
+  stripeEventId?: string
+  merchantRefId?: string
+  resellerId?: string
+  orderId?: string
+  grossAmount?: number
+  currency?: string
+  customerEmail?: string
+  customerName?: string
+  cloakedProductName?: string
+  realProductName?: string
+  bridgeProfile?: 'marketplace' | 'leads'
+  failureReason?: string
+  declineCode?: string
+  metadata?: Record<string, unknown>
+}): Promise<{ updated: boolean; created?: boolean; alreadySettled?: boolean; transactionId?: string }> {
+  const normRef = params.merchantRefId ? params.merchantRefId.toUpperCase().trim() : ''
+  const rawOrderId = String(params.orderId || '').trim()
+  const cleanDigits = rawOrderId.replace(/\D/g, '')
+  const normalizedOrderId = cleanDigits.length >= 4 ? `ORD-${cleanDigits.slice(-4)}` : rawOrderId
+
+  const orConditions: any[] = []
+  if (params.stripeSessionId) {
+    orConditions.push({ stripeSessionId: params.stripeSessionId })
+  }
+  if (params.stripePaymentIntentId) {
+    orConditions.push({ stripePaymentIntentId: params.stripePaymentIntentId })
+  }
+  if (params.stripeEventId) {
+    orConditions.push({ stripeEventId: params.stripeEventId })
+  }
+
+  let existingTxn =
+    orConditions.length > 0
+      ? await Transaction.findOne({ $or: orConditions }).sort({ createdAt: -1 })
+      : null
+
+  if (!existingTxn && normRef && normalizedOrderId) {
+    existingTxn = await Transaction.findOne({
+      merchantRefId: normRef,
+      $or: [{ orderId: normalizedOrderId }, { orderId: rawOrderId }],
+      status: { $in: ['pending', 'failed'] },
+    }).sort({ createdAt: -1 })
+  }
+
+  if (existingTxn && (existingTxn.status === 'succeeded' || existingTxn.status === 'refunded')) {
+    console.log(
+      `[Gateway Failure] Ignoring failure event for already ${existingTxn.status} transaction ${existingTxn.transactionId}`,
+    )
+    return { updated: false, alreadySettled: true, transactionId: existingTxn.transactionId }
+  }
+
+  const merchant = normRef
+    ? await Merchant.findOne({ refId: normRef })
+    : existingTxn
+      ? await Merchant.findById(existingTxn.merchantId)
+      : null
+
+  const resolvedReason = params.failureReason || 'Payment declined or blocked by Stripe'
+  const resolvedCode = params.declineCode || 'payment_failed'
+  const activeBridgeProfile = params.bridgeProfile || existingTxn?.bridgeProfile || merchant?.assignedBridge || 'marketplace'
+
+  let transaction: any = existingTxn
+
+  if (existingTxn) {
+    existingTxn.status = 'failed'
+    if (params.stripeSessionId && !existingTxn.stripeSessionId) {
+      existingTxn.stripeSessionId = params.stripeSessionId
+    }
+    if (params.stripePaymentIntentId) {
+      existingTxn.stripePaymentIntentId = params.stripePaymentIntentId
+    }
+    if (params.stripeEventId && !existingTxn.stripeEventId) {
+      existingTxn.stripeEventId = params.stripeEventId
+    }
+    existingTxn.platformFeeAmount = 0
+    existingTxn.platformFeeCents = 0
+    existingTxn.resellerFeeAmount = 0
+    existingTxn.resellerFeeCents = 0
+    existingTxn.resellerProfitAmount = 0
+    existingTxn.resellerProfitCents = 0
+    existingTxn.merchantNetAmount = 0
+    existingTxn.merchantNetCents = 0
+    existingTxn.rollingReserveAmount = 0
+    existingTxn.settlementStatus = undefined
+    existingTxn.settlementEligibleAt = undefined
+    existingTxn.rollingReserveStatus = undefined
+    existingTxn.rollingReserveReleaseAt = undefined
+    existingTxn.customerEmail = params.customerEmail || existingTxn.customerEmail
+    existingTxn.customerName = params.customerName || existingTxn.customerName
+    existingTxn.bridgeProfile = activeBridgeProfile
+    existingTxn.metadata = {
+      ...(existingTxn.metadata || {}),
+      ...(params.metadata || {}),
+      failureReason: resolvedReason,
+      declineCode: resolvedCode,
+      failedAt: new Date().toISOString(),
+    }
+    await existingTxn.save()
+    transaction = existingTxn
+  } else if (merchant && (params.grossAmount || 0) > 0) {
+    const grossAmount = Number(params.grossAmount || 0)
+    const grossCents = Math.round(grossAmount * 100)
+    const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
+    const cleanNum = cleanDigits.slice(-4) || Date.now().toString().slice(-4)
+    const resolvedPaymentRef = `pgx_${cleanNum}`
+    const resellerId =
+      params.resellerId && params.resellerId !== 'admin_root'
+        ? params.resellerId
+        : merchant.resellerId || 'admin_root'
+
+    transaction = await Transaction.create({
+      transactionId: `TXN_FAIL_${Date.now().toString().slice(-4)}_${txnIdSuffix}`,
+      resellerId,
+      merchantId: merchant._id,
+      merchantRefId: merchant.refId,
+      bridgeProfile: activeBridgeProfile,
+      stripeSessionId: params.stripeSessionId,
+      stripePaymentIntentId: params.stripePaymentIntentId,
+      stripeEventId: params.stripeEventId,
+      paymentRef: resolvedPaymentRef,
+      currency: (params.currency || 'USD').toUpperCase(),
+      grossAmount,
+      grossCents,
+      platformFeeRate: 9.0,
+      platformFeeAmount: 0,
+      platformFeeCents: 0,
+      resellerFeeRate: 12.0,
+      resellerFeeAmount: 0,
+      resellerFeeCents: 0,
+      resellerProfitAmount: 0,
+      resellerProfitCents: 0,
+      merchantNetAmount: 0,
+      merchantNetCents: 0,
+      status: 'failed',
+      customerEmail: params.customerEmail,
+      customerName: params.customerName,
+      orderId: normalizedOrderId || undefined,
+      productName: params.realProductName || (normalizedOrderId ? `Order #${cleanNum}` : 'Digital Goods'),
+      cloakedProductName: params.cloakedProductName,
+      metadata: {
+        ...(params.metadata || {}),
+        failureReason: resolvedReason,
+        declineCode: resolvedCode,
+        failedAt: new Date().toISOString(),
+      },
+    })
+  } else {
+    console.warn(
+      `[Gateway Failure] No matching pending transaction or merchant found for session=${params.stripeSessionId || 'N/A'} pi=${params.stripePaymentIntentId || 'N/A'} ref=${normRef || 'N/A'}`,
+    )
+    return { updated: false }
+  }
+
+  const effectiveResellerId = String(transaction.resellerId || merchant?.resellerId || 'admin_root')
+  const payload = {
+    transactionId: transaction.transactionId,
+    merchantRefId: transaction.merchantRefId,
+    merchantName: merchant?.legalName || merchant?.fullName,
+    grossAmount: transaction.grossAmount,
+    platformFeeAmount: 0,
+    resellerProfitAmount: 0,
+    merchantNetAmount: 0,
+    currency: transaction.currency,
+    status: 'failed',
+    failureReason: resolvedReason,
+    declineCode: resolvedCode,
+    customerEmail: transaction.customerEmail,
+    productName: transaction.productName,
+    createdAt: transaction.createdAt,
+  }
+
+  emitToReseller(effectiveResellerId, WS_EVENTS.TRANSACTION_NEW, payload)
+  emitToAdmins(WS_EVENTS.PLATFORM_TRANSACTION_NEW, payload)
+
+  if (merchant) {
+    await dispatchMerchantWebhook(merchant, transaction, normalizedOrderId || transaction.orderId || '')
+  }
+
+  console.log(
+    `[Gateway Failure] Marked FAILED: ${transaction.transactionId} (${transaction.merchantRefId}) | Reason: ${resolvedCode} — ${resolvedReason}`,
+  )
+
+  return {
+    updated: true,
+    created: !existingTxn,
+    transactionId: transaction.transactionId,
+  }
+}
+
+export async function reconcilePendingTransactions(olderThanMinutes = 15): Promise<{
+  checked: number
+  markedFailed: number
+}> {
+  const cutoff = new Date(Date.now() - Math.max(0, olderThanMinutes) * 60 * 1000)
+  const pendingTxns = await Transaction.find({
+    status: 'pending',
+    createdAt: { $lte: cutoff },
+    stripeSessionId: { $exists: true, $ne: '' },
+  })
+    .sort({ createdAt: -1 })
+    .limit(50)
+
+  let checked = 0
+  let markedFailed = 0
+  const maxSessionAgeMs = 24 * 60 * 60 * 1000
+
+  for (const txn of pendingTxns) {
+    checked++
+    const bridgeKey = txn.bridgeProfile === 'leads' ? 'leads' : 'marketplace'
+    const bridgeCfg = config.bridges?.[bridgeKey] || config.ecomBridge
+    const bridgeUrl = bridgeCfg?.url?.replace(/\/+$/, '')
+    const bridgeSecret = bridgeCfg?.secret?.trim()
+
+    if (!bridgeUrl || !bridgeSecret || !txn.stripeSessionId) continue
+
+    try {
+      const baseBridgeUrl = bridgeUrl.endsWith('/initiate') ? bridgeUrl.replace(/\/initiate$/, '') : bridgeUrl
+      const resp = await fetch(`${baseBridgeUrl}/session-status/${encodeURIComponent(txn.stripeSessionId)}`, {
+        method: 'GET',
+        headers: {
+          'x-gateway-bridge-secret': bridgeSecret,
+        },
+        signal: AbortSignal.timeout(10000),
+      })
+
+      if (!resp.ok) continue
+
+      const data = (await resp.json()) as {
+        sessionStatus?: string
+        paymentStatus?: string
+        paymentIntentId?: string
+        paymentIntentStatus?: string
+        hasPaymentError?: boolean
+        failureReason?: string
+        declineCode?: string
+      }
+
+      const ageMs = Date.now() - new Date(txn.createdAt).getTime()
+      const isExpired = data.sessionStatus === 'expired' || (data.sessionStatus === 'open' && ageMs > maxSessionAgeMs)
+      const isFailed = Boolean(data.hasPaymentError) || data.paymentIntentStatus === 'canceled'
+
+      if (isExpired || isFailed) {
+        const result = await markTransactionFailed({
+          stripeSessionId: txn.stripeSessionId,
+          stripePaymentIntentId: data.paymentIntentId,
+          merchantRefId: txn.merchantRefId,
+          resellerId: String(txn.resellerId || 'admin_root'),
+          orderId: txn.orderId,
+          grossAmount: txn.grossAmount,
+          currency: txn.currency,
+          bridgeProfile: bridgeKey,
+          failureReason:
+            data.failureReason ||
+            (isExpired ? 'Checkout session expired without payment' : 'Payment declined or blocked in Stripe'),
+          declineCode: data.declineCode || (isExpired ? 'checkout.session.expired' : 'payment_failed'),
+        })
+        if (result.updated) markedFailed++
+      }
+    } catch (err: any) {
+      console.warn(`[Reconcile Pending] Failed to check session ${txn.stripeSessionId}: ${err.message}`)
+    }
+  }
+
+  return { checked, markedFailed }
+}
+
+export async function handleReconcilePendingTransactions(req: Request, res: Response): Promise<void> {
+  const olderThanMinutes = Number(req.body?.olderThanMinutes ?? req.query?.olderThanMinutes ?? 5)
+  const result = await reconcilePendingTransactions(isNaN(olderThanMinutes) ? 5 : olderThanMinutes)
+  res.status(200).json({ success: true, ...result })
 }

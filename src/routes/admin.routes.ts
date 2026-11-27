@@ -34,6 +34,7 @@ import {
   updateResellerDefaultBridge,
 } from '../controllers/admin.controller.js'
 import { adminProtect, superAdminOnly, platformAdminOnly } from '../middleware/admin.middleware.js'
+import { handleReconcilePendingTransactions } from '../controllers/webhook.controller.js'
 import { uploadImage } from '../middleware/upload.middleware.js'
 import { authLimiter } from '../middleware/rateLimiter.js'
 
@@ -65,6 +66,7 @@ router.delete('/applications/:id', deleteMerchantApplication)
 router.get('/stripe-config', getResellerStripeConfig)
 router.patch('/stripe-config', updateResellerStripeConfig)
 router.get('/transactions', getAdminTransactions)
+router.post('/transactions/reconcile-pending', platformAdminOnly, handleReconcilePendingTransactions)
 router.get('/super-analytics', superAdminOnly, getSuperAdminAnalytics)
 router.post('/merchants/:merchantId/payout', markMerchantPayout)
 
