@@ -34,7 +34,7 @@ export interface ITransaction extends Document {
   customerName?: string
   orderId?: string
   paymentRef?: string
-  bridgeProfile?: 'marketplace' | 'leads'
+  bridgeProfile?: 'marketplace' | 'leads' | '1pay'
   productName?: string
   cloakedProductName?: string
   metadata?: Record<string, unknown>
@@ -91,7 +91,7 @@ const TransactionSchema = new Schema<ITransaction>(
     },
     bridgeProfile: {
       type: String,
-      enum: ['marketplace', 'leads'],
+      enum: ['marketplace', 'leads', '1pay'],
       default: 'marketplace',
       index: true,
     },

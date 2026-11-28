@@ -1,5 +1,9 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
+export type BridgeProfile = 'marketplace' | 'leads' | '1pay'
+
+export const VALID_BRIDGE_PROFILES: readonly BridgeProfile[] = ['marketplace', 'leads', '1pay'] as const
+
 export interface ISystemConfig extends Document {
   siteName: string
   logoUrl?: string
@@ -14,6 +18,17 @@ export interface ISystemConfig extends Document {
     webhookSecret: string
     isConfigured: boolean
     mode: 'test' | 'live'
+  }
+  onePay?: {
+    liveApiKey: string
+    testApiKey: string
+    liveWebhookSecret: string
+    testWebhookSecret: string
+    liveEndpointSecret: string
+    testEndpointSecret: string
+    webhookUrl: string
+    enabled: boolean
+    isConfigured: boolean
   }
   cryptoWallets?: {
     btcAddress: string
@@ -76,6 +91,17 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       webhookSecret: { type: String, default: '', trim: true },
       isConfigured: { type: Boolean, default: false },
       mode: { type: String, enum: ['test', 'live'], default: 'test' },
+    },
+    onePay: {
+      liveApiKey: { type: String, default: '', trim: true },
+      testApiKey: { type: String, default: '', trim: true },
+      liveWebhookSecret: { type: String, default: '', trim: true },
+      testWebhookSecret: { type: String, default: '', trim: true },
+      liveEndpointSecret: { type: String, default: '', trim: true },
+      testEndpointSecret: { type: String, default: '', trim: true },
+      webhookUrl: { type: String, default: 'https://api.pgxgateway.com/api/v1/webhooks/1pay', trim: true },
+      enabled: { type: Boolean, default: false },
+      isConfigured: { type: Boolean, default: false },
     },
     cryptoWallets: {
       btcAddress: { type: String, default: '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz', trim: true },

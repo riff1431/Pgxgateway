@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import type Stripe from 'stripe'
 import { config } from '../config/env.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
-import { SystemConfig } from '../models/SystemConfig.js'
+import { SystemConfig, type BridgeProfile } from '../models/SystemConfig.js'
 import { Merchant } from '../models/Merchant.js'
 import { Invoice } from '../models/Invoice.js'
 import { PaymentLink } from '../models/PaymentLink.js'
@@ -11,6 +11,7 @@ import { Transaction } from '../models/Transaction.js'
 import { Notification } from '../models/Notification.js'
 import { constructWebhookEvent } from '../services/stripe.service.js'
 import { emitToAdmins, emitToMerchant, emitToReseller, WS_EVENTS } from '../services/socket.service.js'
+import { getOnePayDbConfig, getOnePayPayment, verifyOnePayWebhookSignature } from '../services/onepay.service.js'
 
 export async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
   const signature = req.headers['stripe-signature'] as string | undefined
@@ -484,10 +485,14 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   }
 
   // Detect bridgeProfile
-  let detectedBridge: 'marketplace' | 'leads' = 'marketplace'
+  let detectedBridge: BridgeProfile = 'marketplace'
   if (config.bridges?.leads?.secret && incomingSecret === config.bridges.leads.secret.trim()) {
     detectedBridge = 'leads'
-  } else if (req.body.bridgeProfile === 'leads' || req.body.bridgeProfile === 'marketplace') {
+  } else if (
+    req.body.bridgeProfile === 'leads' ||
+    req.body.bridgeProfile === 'marketplace' ||
+    req.body.bridgeProfile === '1pay'
+  ) {
     detectedBridge = req.body.bridgeProfile
   }
 
@@ -539,6 +544,70 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     return
   }
 
+  const outcome = await settleGatewayTransaction({
+    stripeSessionId,
+    stripeEventId,
+    merchantRefId,
+    resellerId,
+    orderId,
+    grossAmount,
+    currency,
+    customerEmail,
+    customerName,
+    cloakedProductName,
+    realProductName,
+    detectedBridge,
+    metadata,
+  })
+
+  res.status(outcome.status).json(outcome.body)
+}
+
+function resolveBridgePresentation(bridgeProfile: BridgeProfile): { cloakedSku: string; settlementChannel: string } {
+  if (bridgeProfile === 'leads') {
+    return { cloakedSku: 'B2B Leads Package', settlementChannel: 'pgx_leads_ecom' }
+  }
+  if (bridgeProfile === '1pay') {
+    return { cloakedSku: 'Card-to-Crypto Checkout', settlementChannel: 'onepay_card_to_crypto' }
+  }
+  return { cloakedSku: 'pgxdigital Software License', settlementChannel: 'pgx_digital_ecom' }
+}
+
+interface SettleGatewayTransactionParams {
+  stripeSessionId: string
+  stripeEventId?: string
+  merchantRefId: string
+  resellerId?: string
+  orderId?: string
+  grossAmount: number
+  currency?: string
+  customerEmail?: string
+  customerName?: string
+  cloakedProductName?: string
+  realProductName?: string
+  detectedBridge?: BridgeProfile
+  metadata?: Record<string, unknown>
+}
+
+async function settleGatewayTransaction(
+  params: SettleGatewayTransactionParams
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const {
+    stripeSessionId,
+    stripeEventId,
+    merchantRefId,
+    resellerId = 'admin_root',
+    orderId = '',
+    grossAmount,
+    currency = 'USD',
+    customerEmail,
+    customerName,
+    cloakedProductName,
+    realProductName,
+    detectedBridge,
+    metadata = {},
+  } = params
+
   // Idempotency check
   const existingTxn = await Transaction.findOne({
     $or: [{ stripeSessionId }, ...(stripeEventId ? [{ stripeEventId }] : [])],
@@ -546,15 +615,13 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
 
   if (existingTxn && existingTxn.status === 'succeeded') {
     console.log(`[Gateway Settlement] Duplicate event ${stripeSessionId} already processed.`)
-    res.status(200).json({ received: true, duplicate: true, transactionId: existingTxn.transactionId })
-    return
+    return { status: 200, body: { received: true, duplicate: true, transactionId: existingTxn.transactionId } }
   }
 
   const merchant = await Merchant.findOne({ refId: merchantRefId.toUpperCase().trim() })
   if (!merchant) {
     console.warn(`[Gateway Settlement] Merchant with refId ${merchantRefId} not found in database.`)
-    res.status(404).json({ error: `Merchant ${merchantRefId} not found` })
-    return
+    return { status: 404, body: { error: `Merchant ${merchantRefId} not found` } }
   }
 
   const normCurrency = String(currency).toUpperCase()
@@ -612,7 +679,7 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
 
     // Transaction log
     const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
-    const activeBridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
+    const activeBridgeProfile: BridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
     const setupCleanNum = String(orderId || '').replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
     const setupPaymentRef = `pgx_${setupCleanNum}`
 
@@ -660,8 +727,7 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
       type: 'setup_fee',
     })
 
-    res.status(200).json({ received: true, setupFeeProcessed: true, transactionId: setupTxn.transactionId })
-    return
+    return { status: 200, body: { received: true, setupFeeProcessed: true, transactionId: setupTxn.transactionId } }
   }
 
   // Check if this settlement is a Weekly Invoice payment through the E-Commerce Bridge
@@ -670,8 +736,9 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     (effectiveOrderId && String(effectiveOrderId).startsWith('INV-'))
 
   if (isWeeklyInvoice) {
+    const invoiceIdVal = existingTxn?.metadata?.invoiceId ?? metadata?.invoiceId
     const invoiceResult = await processWeeklyInvoiceSettlement({
-      invoiceId: existingTxn?.metadata?.invoiceId || metadata?.invoiceId,
+      invoiceId: typeof invoiceIdVal === 'string' ? invoiceIdVal : undefined,
       invoiceNumber: effectiveOrderId,
       stripeSessionId,
       stripeEventId,
@@ -683,8 +750,7 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     })
 
     if (invoiceResult) {
-      res.status(200).json({ received: true, invoiceProcessed: true, ...invoiceResult })
-      return
+      return { status: 200, body: { received: true, invoiceProcessed: true, ...invoiceResult } }
     }
   }
 
@@ -746,7 +812,8 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
 
   const txnIdSuffix = crypto.randomBytes(3).toString('hex').toUpperCase()
   const transactionId = `TXN_ECOM_${Date.now().toString().slice(-4)}_${txnIdSuffix}`
-  const activeBridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
+  const activeBridgeProfile: BridgeProfile = detectedBridge || merchant.assignedBridge || 'marketplace'
+  const presentation = resolveBridgePresentation(activeBridgeProfile)
   const cleanOrderNum = String(orderId || '').replace(/\D/g, '').slice(-4) || Date.now().toString().slice(-4)
   const resolvedPaymentRef = `pgx_${cleanOrderNum}`
 
@@ -782,12 +849,14 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
     if (!existingTxn.paymentRef) {
       existingTxn.paymentRef = resolvedPaymentRef
     }
-    existingTxn.productName = realProductName || metadata?.realProductName || (orderId ? `Order #${orderId}` : 'Digital Goods')
-    existingTxn.cloakedProductName = cloakedProductName || metadata?.cloakedSku || (activeBridgeProfile === 'leads' ? 'B2B Leads Package' : 'pgxdigital Software License')
+    const metaRealProduct = typeof metadata?.realProductName === 'string' ? metadata.realProductName : ''
+    const metaCloakedSku = typeof metadata?.cloakedSku === 'string' ? metadata.cloakedSku : ''
+    existingTxn.productName = realProductName || metaRealProduct || (orderId ? `Order #${orderId}` : 'Digital Goods')
+    existingTxn.cloakedProductName = cloakedProductName || metaCloakedSku || presentation.cloakedSku
     existingTxn.metadata = {
       ...(existingTxn.metadata || {}),
       ...metadata,
-      settlement_channel: activeBridgeProfile === 'leads' ? 'pgx_leads_ecom' : 'pgx_digital_ecom',
+      settlement_channel: presentation.settlementChannel,
     }
     await existingTxn.save()
     transaction = existingTxn
@@ -827,10 +896,10 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
       customerName,
       orderId,
       productName: realProductName || metadata?.realProductName || (orderId ? `Order #${orderId}` : 'Digital Goods'),
-      cloakedProductName: cloakedProductName || metadata?.cloakedSku || (activeBridgeProfile === 'leads' ? 'B2B Leads Package' : 'pgxdigital Software License'),
+      cloakedProductName: cloakedProductName || metadata?.cloakedSku || presentation.cloakedSku,
       metadata: {
         ...metadata,
-        settlement_channel: activeBridgeProfile === 'leads' ? 'pgx_leads_ecom' : 'pgx_digital_ecom',
+        settlement_channel: presentation.settlementChannel,
       },
     })
   }
@@ -871,7 +940,7 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   }
 
   console.log(
-    `[Gateway Settlement] Succeeded: ${transactionId} for merchant ${merchant.refId} | Gross: $${grossAmount} | Net: $${merchantNetAmount}`
+    `[Gateway Settlement] Succeeded (${activeBridgeProfile}): ${transactionId} for merchant ${merchant.refId} | Gross: $${grossAmount} | Net: $${merchantNetAmount}`
   )
 
   const payload = {
@@ -905,12 +974,155 @@ export async function handleGatewaySettlementWebhook(req: Request, res: Response
   // Outbound Server-to-Server Webhook to Merchant WooCommerce / Website
   await dispatchMerchantWebhook(merchant, transaction, orderId)
 
-  res.status(200).json({
-    success: true,
-    transactionId,
-    grossAmount,
-    merchantNetAmount,
-  })
+  return {
+    status: 200,
+    body: {
+      success: true,
+      transactionId,
+      grossAmount,
+      merchantNetAmount,
+    },
+  }
+}
+
+/**
+ * Webhook endpoint for 1pay.cx Card-to-Crypto processor (Bridge #3).
+ * Verifies X-1pay-Signature-V2 / X-1pay-Signature against secrets stored in MongoDB SystemConfig.
+ */
+export async function handleOnePayWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const { onePay } = await getOnePayDbConfig()
+    const secrets = [
+      onePay?.liveWebhookSecret || '',
+      onePay?.testWebhookSecret || '',
+      onePay?.liveEndpointSecret || '',
+      onePay?.testEndpointSecret || '',
+    ].filter(Boolean)
+
+    const rawBodyStr = req.rawBody
+      ? req.rawBody.toString('utf8')
+      : Buffer.isBuffer(req.body)
+        ? req.body.toString('utf8')
+        : typeof req.body === 'string'
+          ? req.body
+          : JSON.stringify(req.body || {})
+
+    const verification = verifyOnePayWebhookSignature(
+      rawBodyStr,
+      {
+        v2: req.headers['x-1pay-signature-v2'] as string | undefined,
+        v1: req.headers['x-1pay-signature'] as string | undefined,
+      },
+      secrets
+    )
+
+    if (!verification.valid) {
+      console.warn(`[1pay Webhook] Signature rejected: ${verification.reason}`)
+      res.status(400).json({ error: verification.reason || 'Invalid 1pay.cx webhook signature' })
+      return
+    }
+
+    const payload =
+      Buffer.isBuffer(req.body) || typeof req.body === 'string'
+        ? JSON.parse(rawBodyStr)
+        : (req.body as Record<string, any>)
+
+    const eventId = String(payload?.id || '').trim()
+    const eventName = String(payload?.event || payload?.type || '').trim()
+    const data = (payload?.data || {}) as Record<string, any>
+
+    const onePayPaymentId = String(data.paymentId || data.id || '').trim()
+    const reference = String(data.reference || '').trim()
+
+    // Acknowledge dashboard test-ping deliveries cleanly
+    if (!onePayPaymentId || eventName === 'webhook.test' || eventName === 'test') {
+      res.status(200).json({ received: true, test: true, event: eventName || 'ping' })
+      return
+    }
+
+    const existingTxn = await Transaction.findOne({
+      $or: [
+        { stripeSessionId: onePayPaymentId },
+        ...(reference ? [{ paymentRef: reference }] : []),
+      ],
+    }).sort({ createdAt: -1 })
+
+    if (!existingTxn) {
+      console.warn(`[1pay Webhook] No matching PGX transaction found for payment=${onePayPaymentId} ref=${reference}`)
+      res.status(200).json({ received: true, ignored: true, reason: 'Transaction not found' })
+      return
+    }
+
+    const resolvedStatus = String(data.status || '').toLowerCase()
+    const onePayMeta = {
+      processor: '1pay',
+      onePayEvent: eventName,
+      onePayPaymentId,
+      onePayAsset: data.asset,
+      onePayTxidOut: data.txidOut,
+      onePayLivemode: data.livemode,
+    }
+
+    if (eventName === 'payment.paid' || resolvedStatus === 'paid') {
+      const grossAmount =
+        typeof data.amount === 'number' && data.amount > 0 ? data.amount : existingTxn.grossAmount
+      const outcome = await settleGatewayTransaction({
+        stripeSessionId: existingTxn.stripeSessionId || onePayPaymentId,
+        stripeEventId: eventId || undefined,
+        merchantRefId: existingTxn.merchantRefId,
+        resellerId: String(existingTxn.resellerId || 'admin_root'),
+        orderId: existingTxn.orderId || '',
+        grossAmount,
+        currency: String(data.currency || existingTxn.currency || 'USD').toUpperCase(),
+        customerEmail: data.email || existingTxn.customerEmail,
+        detectedBridge: '1pay',
+        metadata: onePayMeta,
+      })
+      res.status(outcome.status).json(outcome.body)
+      return
+    }
+
+    if (
+      eventName === 'payment.failed' ||
+      eventName === 'payment.expired' ||
+      resolvedStatus === 'failed' ||
+      resolvedStatus === 'expired'
+    ) {
+      const result = await markTransactionFailed({
+        stripeSessionId: existingTxn.stripeSessionId || onePayPaymentId,
+        stripeEventId: eventId || undefined,
+        merchantRefId: existingTxn.merchantRefId,
+        resellerId: String(existingTxn.resellerId || 'admin_root'),
+        orderId: existingTxn.orderId,
+        grossAmount: existingTxn.grossAmount,
+        currency: existingTxn.currency,
+        customerEmail: data.email || existingTxn.customerEmail,
+        bridgeProfile: '1pay',
+        failureReason:
+          eventName === 'payment.expired' || resolvedStatus === 'expired'
+            ? '1pay.cx checkout expired without payment'
+            : '1pay.cx payment failed or declined',
+        declineCode: eventName || resolvedStatus || 'payment_failed',
+        metadata: onePayMeta,
+      })
+      res.status(200).json({ received: true, ...result })
+      return
+    }
+
+    if (eventName === 'payment.underpaid' || resolvedStatus === 'underpaid') {
+      existingTxn.metadata = {
+        ...(existingTxn.metadata || {}),
+        ...onePayMeta,
+        underpaidAt: new Date().toISOString(),
+      }
+      await existingTxn.save()
+    }
+
+    res.status(200).json({ received: true, status: resolvedStatus || eventName || 'acknowledged' })
+  } catch (err: any) {
+    console.error('[1pay Webhook] Unhandled processing error:', err)
+    res.status(500).json({ error: 'Internal webhook handler error' })
+  }
 }
 
 async function processWeeklyInvoiceSettlement(params: {
@@ -921,7 +1133,7 @@ async function processWeeklyInvoiceSettlement(params: {
   grossAmount: number
   currency: string
   customerEmail?: string
-  bridgeProfile?: 'marketplace' | 'leads'
+  bridgeProfile?: BridgeProfile
   existingTxn?: any
 }) {
   const invoice = await Invoice.findOne(
@@ -1027,7 +1239,7 @@ export async function markTransactionFailed(params: {
   customerName?: string
   cloakedProductName?: string
   realProductName?: string
-  bridgeProfile?: 'marketplace' | 'leads'
+  bridgeProfile?: BridgeProfile
   failureReason?: string
   declineCode?: string
   metadata?: Record<string, unknown>
@@ -1225,12 +1437,67 @@ export async function reconcilePendingTransactions(olderThanMinutes = 15): Promi
 
   for (const txn of pendingTxns) {
     checked++
+    if (!txn.stripeSessionId) continue
+
+    if (txn.bridgeProfile === '1pay') {
+      try {
+        const payment = await getOnePayPayment(
+          txn.stripeSessionId,
+          txn.metadata?.onePayMode as 'test' | 'live' | undefined
+        )
+        if (!payment) continue
+
+        const ageMs = Date.now() - new Date(txn.createdAt).getTime()
+        const status = String(payment.status || '').toLowerCase()
+
+        if (status === 'paid') {
+          await settleGatewayTransaction({
+            stripeSessionId: txn.stripeSessionId,
+            merchantRefId: txn.merchantRefId,
+            resellerId: String(txn.resellerId || 'admin_root'),
+            orderId: txn.orderId || '',
+            grossAmount: typeof payment.amount === 'number' && payment.amount > 0 ? payment.amount : txn.grossAmount,
+            currency: String(payment.currency || txn.currency || 'USD').toUpperCase(),
+            customerEmail: payment.email || txn.customerEmail,
+            detectedBridge: '1pay',
+            metadata: {
+              processor: '1pay',
+              reconciled: true,
+              onePayAsset: payment.asset,
+              onePayTxidOut: payment.txidOut,
+            },
+          })
+          continue
+        }
+
+        const isExpired = status === 'expired' || (status === 'pending' && ageMs > maxSessionAgeMs)
+        const isFailed = status === 'failed'
+        if (isExpired || isFailed) {
+          const result = await markTransactionFailed({
+            stripeSessionId: txn.stripeSessionId,
+            merchantRefId: txn.merchantRefId,
+            resellerId: String(txn.resellerId || 'admin_root'),
+            orderId: txn.orderId,
+            grossAmount: txn.grossAmount,
+            currency: txn.currency,
+            bridgeProfile: '1pay',
+            failureReason: isExpired ? '1pay.cx checkout expired without payment' : '1pay.cx payment failed',
+            declineCode: isExpired ? 'payment.expired' : 'payment.failed',
+          })
+          if (result.updated) markedFailed++
+        }
+      } catch (err: any) {
+        console.warn(`[Reconcile Pending] Failed to check 1pay payment ${txn.stripeSessionId}: ${err.message}`)
+      }
+      continue
+    }
+
     const bridgeKey = txn.bridgeProfile === 'leads' ? 'leads' : 'marketplace'
     const bridgeCfg = config.bridges?.[bridgeKey] || config.ecomBridge
     const bridgeUrl = bridgeCfg?.url?.replace(/\/+$/, '')
     const bridgeSecret = bridgeCfg?.secret?.trim()
 
-    if (!bridgeUrl || !bridgeSecret || !txn.stripeSessionId) continue
+    if (!bridgeUrl || !bridgeSecret) continue
 
     try {
       const baseBridgeUrl = bridgeUrl.endsWith('/initiate') ? bridgeUrl.replace(/\/initiate$/, '') : bridgeUrl

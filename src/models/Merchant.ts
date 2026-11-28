@@ -84,7 +84,7 @@ export interface IMerchant extends Document {
   refId?: string
   resellerId?: string
   role?: 'sub_merchant' | 'reseller' | 'super_admin'
-  assignedBridge?: 'marketplace' | 'leads'
+  assignedBridge?: 'marketplace' | 'leads' | '1pay'
   apiKey?: string
   webhookUrl?: string
   webhookSecret?: string
@@ -338,7 +338,7 @@ const MerchantSchema = new Schema<IMerchant>(
     },
     assignedBridge: {
       type: String,
-      enum: ['marketplace', 'leads'],
+      enum: ['marketplace', 'leads', '1pay'],
       default: 'marketplace',
       index: true,
     },

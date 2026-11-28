@@ -5,6 +5,8 @@ import { config } from '../config/env.js'
 import { Merchant, type IMerchant } from '../models/Merchant.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Transaction } from '../models/Transaction.js'
+import { VALID_BRIDGE_PROFILES, type BridgeProfile } from '../models/SystemConfig.js'
+import { createOnePayPayment } from '../services/onepay.service.js'
 
 export interface BridgeCheckoutParams {
   amount: number
@@ -129,31 +131,14 @@ export async function executeBridgeCheckoutForMerchant(
   const resellerId = merchant.resellerId || 'admin_root'
   const currency = (params.currency || 'USD').toUpperCase()
 
-  let assignedBridgeKey: 'marketplace' | 'leads' =
-    (merchant.assignedBridge as 'marketplace' | 'leads') || 'marketplace'
+  let assignedBridgeKey: BridgeProfile =
+    merchant.assignedBridge && VALID_BRIDGE_PROFILES.includes(merchant.assignedBridge)
+      ? merchant.assignedBridge
+      : 'marketplace'
   if (!merchant.assignedBridge) {
     const resellerConfig = await ResellerConfig.findOne({ resellerId })
-    if (resellerConfig?.defaultBridge && ['marketplace', 'leads'].includes(resellerConfig.defaultBridge)) {
+    if (resellerConfig?.defaultBridge && VALID_BRIDGE_PROFILES.includes(resellerConfig.defaultBridge)) {
       assignedBridgeKey = resellerConfig.defaultBridge
-    }
-  }
-  const activeBridge = config.bridges?.[assignedBridgeKey] || {
-    id: assignedBridgeKey,
-    name: assignedBridgeKey === 'leads' ? 'PGX Leads' : 'PGX MarketPlace',
-    domain: assignedBridgeKey === 'leads' ? 'pgxleads.shop' : 'pgxmarketplace.shop',
-    url: config.ecomBridge.url,
-    secret: config.ecomBridge.secret,
-    enabled: config.ecomBridge.enabled,
-  }
-
-  if (!activeBridge.enabled || !activeBridge.url) {
-    return {
-      ok: false,
-      status: 503,
-      body: {
-        success: false,
-        message: 'E-Commerce payment gateway bridge is currently offline or disabled. Please contact administration.',
-      },
     }
   }
 
@@ -164,121 +149,178 @@ export async function executeBridgeCheckoutForMerchant(
         ? 'test'
         : 'live'
 
-  try {
-    const bridgeEndpoint = `${activeBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
-    console.log(
-      `[Checkout] Routing payment through ${activeBridge.name} [${activeBridge.domain}]: ${bridgeEndpoint} for merchant ${merchant.refId}`
-    )
+  const rawOrderId = String(params.orderId || '').trim()
+  const digitsOnly = rawOrderId.replace(/\D/g, '')
+  let cleanOrderNum = ''
+  if (digitsOnly.length >= 4) {
+    cleanOrderNum = digitsOnly.slice(-4)
+  } else if (digitsOnly.length > 0) {
+    cleanOrderNum = digitsOnly.padStart(4, '0')
+  } else {
+    cleanOrderNum = Date.now().toString().slice(-4)
+  }
+  const cleanProductName = `Order #${cleanOrderNum}`
+  const paymentRef = `pgx_${cleanOrderNum || Date.now().toString(36)}`
 
-    const rawOrderId = String(params.orderId || '').trim()
-    const digitsOnly = rawOrderId.replace(/\D/g, '')
-    let cleanOrderNum = ''
-    if (digitsOnly.length >= 4) {
-      cleanOrderNum = digitsOnly.slice(-4)
-    } else if (digitsOnly.length > 0) {
-      cleanOrderNum = digitsOnly.padStart(4, '0')
-    } else {
-      cleanOrderNum = Date.now().toString().slice(-4)
-    }
-    const cleanProductName = `Order #${cleanOrderNum}`
+  let checkoutUrl = ''
+  let rawSessionId = ''
+  let extraTxnMeta: Record<string, unknown> = {}
 
-    const bridgeRes = await fetch(bridgeEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-gateway-bridge-secret': activeBridge.secret,
-      },
-      body: JSON.stringify({
-        merchantRefId: merchant.refId,
-        resellerId,
-        orderId: `ORD-${cleanOrderNum}`,
+  if (assignedBridgeKey === '1pay') {
+    try {
+      console.log(
+        `[Checkout] Routing payment through 1pay.cx Card-to-Crypto (${effectiveMode}) for merchant ${merchant.refId}`
+      )
+      const onePayResult = await createOnePayPayment({
         amount: numericAmount,
         currency,
-        customerEmail: params.customerEmail,
+        email: params.customerEmail,
         productName: cleanProductName,
-        successUrl: params.successUrl,
+        reference: paymentRef,
+        redirectUrl: params.successUrl,
         cancelUrl: params.cancelUrl,
         mode: effectiveMode,
-      }),
-    })
-
-    if (!bridgeRes.ok) {
-      const errText = await bridgeRes.text()
-      console.warn(`[Checkout] E-Commerce Bridge error: ${bridgeRes.status} ${errText}`)
+        idempotencyKey: `${merchant.refId || merchant._id}_${rawOrderId || paymentRef}_${effectiveMode}`,
+      })
+      checkoutUrl = onePayResult.checkoutUrl
+      rawSessionId = onePayResult.id
+      extraTxnMeta = { processor: '1pay', onePayPaymentId: onePayResult.id, onePayMode: effectiveMode }
+    } catch (onePayErr: any) {
+      console.error(`[Checkout] Failed to initiate 1pay.cx payment: ${onePayErr.message}`)
       return {
         ok: false,
-        status: bridgeRes.status,
+        status: 502,
         body: {
           success: false,
-          message: `E-Commerce payment bridge error: ${errText || bridgeRes.statusText}`,
+          message: `Card-to-Crypto processor error: ${onePayErr.message}`,
+        },
+      }
+    }
+  } else {
+    const activeBridge = config.bridges?.[assignedBridgeKey] || {
+      id: assignedBridgeKey,
+      name: assignedBridgeKey === 'leads' ? 'PGX Leads' : 'PGX MarketPlace',
+      domain: assignedBridgeKey === 'leads' ? 'pgxleads.shop' : 'pgxmarketplace.shop',
+      url: config.ecomBridge.url,
+      secret: config.ecomBridge.secret,
+      enabled: config.ecomBridge.enabled,
+    }
+
+    if (!activeBridge.enabled || !activeBridge.url) {
+      return {
+        ok: false,
+        status: 503,
+        body: {
+          success: false,
+          message: 'E-Commerce payment gateway bridge is currently offline or disabled. Please contact administration.',
         },
       }
     }
 
-    const bridgeData = (await bridgeRes.json()) as any
-    const checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
-    const rawStripeSessionId = bridgeData.sessionId || bridgeData.data?.sessionId
-    const paymentRef = `pgx_${cleanOrderNum || Date.now().toString(36)}`
-
     try {
-      const pendingTxnId = `TXN_PEND_${Date.now().toString().slice(-4)}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`
-      await Transaction.create({
-        transactionId: pendingTxnId,
-        resellerId,
-        merchantId: merchant._id,
-        merchantRefId: merchant.refId,
-        bridgeProfile: assignedBridgeKey,
-        stripeSessionId: rawStripeSessionId,
-        paymentRef,
-        orderId: `ORD-${cleanOrderNum}`,
-        currency,
-        grossAmount: numericAmount,
-        grossCents: Math.round(numericAmount * 100),
-        platformFeeRate: 9.0,
-        platformFeeAmount: 0,
-        platformFeeCents: 0,
-        resellerFeeRate: 12.0,
-        resellerFeeAmount: 0,
-        resellerFeeCents: 0,
-        resellerProfitAmount: 0,
-        resellerProfitCents: 0,
-        merchantNetAmount: 0,
-        merchantNetCents: 0,
-        status: 'pending',
-        customerEmail: params.customerEmail,
-        productName: params.productName,
-        metadata: {
-          rawOrderId,
-          cleanOrderNum,
-          paymentRef,
-          checkoutUrl,
-          ...(params.extraMetadata || {}),
-        },
-      })
-    } catch (pendingErr: any) {
-      console.warn(`[Checkout] Non-blocking pending transaction save notice: ${pendingErr.message}`)
-    }
+      const bridgeEndpoint = `${activeBridge.url.replace(/\/+$/, '')}/api/gateway-bridge/initiate`
+      console.log(
+        `[Checkout] Routing payment through ${activeBridge.name} [${activeBridge.domain}]: ${bridgeEndpoint} for merchant ${merchant.refId}`
+      )
 
-    return {
-      ok: true,
-      data: {
-        success: true,
+      const bridgeRes = await fetch(bridgeEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gateway-bridge-secret': activeBridge.secret,
+        },
+        body: JSON.stringify({
+          merchantRefId: merchant.refId,
+          resellerId,
+          orderId: `ORD-${cleanOrderNum}`,
+          amount: numericAmount,
+          currency,
+          customerEmail: params.customerEmail,
+          productName: cleanProductName,
+          successUrl: params.successUrl,
+          cancelUrl: params.cancelUrl,
+          mode: effectiveMode,
+        }),
+      })
+
+      if (!bridgeRes.ok) {
+        const errText = await bridgeRes.text()
+        console.warn(`[Checkout] E-Commerce Bridge error: ${bridgeRes.status} ${errText}`)
+        return {
+          ok: false,
+          status: bridgeRes.status,
+          body: {
+            success: false,
+            message: `E-Commerce payment bridge error: ${errText || bridgeRes.statusText}`,
+          },
+        }
+      }
+
+      const bridgeData = (await bridgeRes.json()) as any
+      checkoutUrl = bridgeData.checkoutUrl || bridgeData.data?.checkoutUrl
+      rawSessionId = bridgeData.sessionId || bridgeData.data?.sessionId
+    } catch (bridgeErr: any) {
+      console.error(`[Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}`)
+      return {
+        ok: false,
+        status: 502,
+        body: {
+          success: false,
+          message: `Failed to connect to E-Commerce payment bridge: ${bridgeErr.message}`,
+        },
+      }
+    }
+  }
+
+  try {
+    const pendingTxnId = `TXN_PEND_${Date.now().toString().slice(-4)}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`
+    await Transaction.create({
+      transactionId: pendingTxnId,
+      resellerId,
+      merchantId: merchant._id,
+      merchantRefId: merchant.refId,
+      bridgeProfile: assignedBridgeKey,
+      stripeSessionId: rawSessionId,
+      paymentRef,
+      orderId: `ORD-${cleanOrderNum}`,
+      currency,
+      grossAmount: numericAmount,
+      grossCents: Math.round(numericAmount * 100),
+      platformFeeRate: 9.0,
+      platformFeeAmount: 0,
+      platformFeeCents: 0,
+      resellerFeeRate: 12.0,
+      resellerFeeAmount: 0,
+      resellerFeeCents: 0,
+      resellerProfitAmount: 0,
+      resellerProfitCents: 0,
+      merchantNetAmount: 0,
+      merchantNetCents: 0,
+      status: 'pending',
+      customerEmail: params.customerEmail,
+      productName: params.productName,
+      metadata: {
+        rawOrderId,
+        cleanOrderNum,
         paymentRef,
-        sessionId: paymentRef,
         checkoutUrl,
-        mode: effectiveMode,
+        ...extraTxnMeta,
+        ...(params.extraMetadata || {}),
       },
-    }
-  } catch (bridgeErr: any) {
-    console.error(`[Checkout] Failed to reach E-Commerce Bridge: ${bridgeErr.message}`)
-    return {
-      ok: false,
-      status: 502,
-      body: {
-        success: false,
-        message: `Failed to connect to E-Commerce payment bridge: ${bridgeErr.message}`,
-      },
-    }
+    })
+  } catch (pendingErr: any) {
+    console.warn(`[Checkout] Non-blocking pending transaction save notice: ${pendingErr.message}`)
+  }
+
+  return {
+    ok: true,
+    data: {
+      success: true,
+      paymentRef,
+      sessionId: paymentRef,
+      checkoutUrl,
+      mode: effectiveMode,
+    },
   }
 }
 

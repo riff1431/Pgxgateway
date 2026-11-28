@@ -58,13 +58,37 @@ async function getOrCreateSystemConfig(): Promise<ISystemConfig> {
 // ----------------------------------------------------
 // 1. SUPER ADMIN: Platform Settings
 // ----------------------------------------------------
+function maskSecretValue(value?: string): string {
+  if (!value) return ''
+  if (value.length <= 14) return '••••••••'
+  return `${value.slice(0, 7)}...${value.slice(-4)}`
+}
+
+function serializeOnePaySettings(onePay?: ISystemConfig['onePay']) {
+  return {
+    liveApiKey: maskSecretValue(onePay?.liveApiKey),
+    testApiKey: maskSecretValue(onePay?.testApiKey),
+    liveWebhookSecret: maskSecretValue(onePay?.liveWebhookSecret),
+    testWebhookSecret: maskSecretValue(onePay?.testWebhookSecret),
+    liveEndpointSecret: maskSecretValue(onePay?.liveEndpointSecret),
+    testEndpointSecret: maskSecretValue(onePay?.testEndpointSecret),
+    hasLiveApiKey: Boolean(onePay?.liveApiKey),
+    hasTestApiKey: Boolean(onePay?.testApiKey),
+    hasLiveWebhookSecret: Boolean(onePay?.liveWebhookSecret),
+    hasTestWebhookSecret: Boolean(onePay?.testWebhookSecret),
+    hasLiveEndpointSecret: Boolean(onePay?.liveEndpointSecret),
+    hasTestEndpointSecret: Boolean(onePay?.testEndpointSecret),
+    webhookUrl: onePay?.webhookUrl || 'https://api.pgxgateway.com/api/v1/webhooks/1pay',
+    enabled: Boolean(onePay?.enabled),
+    isConfigured: Boolean(onePay?.isConfigured),
+  }
+}
+
 export async function getPlatformSettings(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const config = await getOrCreateSystemConfig()
 
-    const maskedSecretKey = config.stripe?.secretKey
-      ? `${config.stripe.secretKey.slice(0, 7)}...${config.stripe.secretKey.slice(-4)}`
-      : ''
+    const maskedSecretKey = maskSecretValue(config.stripe?.secretKey)
 
     return res.status(200).json({
       success: true,
@@ -88,6 +112,7 @@ export async function getPlatformSettings(req: AdminRequest, res: Response, next
           isConfigured: Boolean(config.stripe?.isConfigured),
           mode: config.stripe?.mode || 'test',
         },
+        onePay: serializeOnePaySettings(config.onePay),
         cryptoWallets: {
           btcAddress: config.cryptoWallets?.btcAddress || '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz',
           usdcEthAddress: config.cryptoWallets?.usdcEthAddress || '0x4520FBE6d418c1bAcE97A1E517e5Be2d78eb9598',
@@ -191,6 +216,51 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
       }
     }
 
+    if (req.body.onePay) {
+      const incoming = req.body.onePay as Record<string, unknown>
+      if (!config.onePay) {
+        config.onePay = {
+          liveApiKey: '',
+          testApiKey: '',
+          liveWebhookSecret: '',
+          testWebhookSecret: '',
+          liveEndpointSecret: '',
+          testEndpointSecret: '',
+          webhookUrl: 'https://api.pgxgateway.com/api/v1/webhooks/1pay',
+          enabled: false,
+          isConfigured: false,
+        }
+      }
+
+      const secretFields = [
+        'liveApiKey',
+        'testApiKey',
+        'liveWebhookSecret',
+        'testWebhookSecret',
+        'liveEndpointSecret',
+        'testEndpointSecret',
+      ] as const
+
+      for (const field of secretFields) {
+        const rawVal = incoming[field]
+        if (typeof rawVal === 'string') {
+          const trimmed = rawVal.trim()
+          if (trimmed && !trimmed.includes('...') && !trimmed.includes('••••')) {
+            config.onePay[field] = trimmed
+          }
+        }
+      }
+
+      if (typeof incoming.webhookUrl === 'string' && incoming.webhookUrl.trim()) {
+        config.onePay.webhookUrl = incoming.webhookUrl.trim()
+      }
+      if (typeof incoming.enabled === 'boolean') {
+        config.onePay.enabled = incoming.enabled
+      }
+
+      config.onePay.isConfigured = Boolean(config.onePay.liveApiKey || config.onePay.testApiKey)
+    }
+
     await config.save()
 
     return res.status(200).json({
@@ -208,6 +278,7 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
           isConfigured: Boolean(config.stripe?.isConfigured),
           mode: config.stripe?.mode || 'test',
         },
+        onePay: serializeOnePaySettings(config.onePay),
       },
     })
   } catch (error) {

@@ -6,7 +6,7 @@ import { config } from '../config/env.js'
 import { signToken } from '../utils/jwt.js'
 import { Merchant, generateMerchantRefId } from '../models/Merchant.js'
 import { Notification } from '../models/Notification.js'
-import { SystemConfig } from '../models/SystemConfig.js'
+import { SystemConfig, VALID_BRIDGE_PROFILES } from '../models/SystemConfig.js'
 import { ResellerConfig } from '../models/ResellerConfig.js'
 import { Transaction } from '../models/Transaction.js'
 import { Invoice } from '../models/Invoice.js'
@@ -420,7 +420,7 @@ export async function reviewApplication(req: AdminRequest, res: Response, next: 
       req.admin?.resellerId === 'admin_root' ||
       req.admin?.resellerId === 'super_admin_root'
 
-    if (isPlatformRoot && assignedBridge && ['marketplace', 'leads'].includes(assignedBridge)) {
+    if (isPlatformRoot && assignedBridge && VALID_BRIDGE_PROFILES.includes(assignedBridge)) {
       merchant.assignedBridge = assignedBridge
     }
 
@@ -2049,10 +2049,10 @@ export async function updateMerchantBridge(req: AdminRequest, res: Response, nex
     const { id } = req.params
     const { assignedBridge } = req.body
 
-    if (!['marketplace', 'leads'].includes(assignedBridge)) {
+    if (!VALID_BRIDGE_PROFILES.includes(assignedBridge)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid bridge profile. Must be "marketplace" or "leads".',
+        message: 'Invalid bridge profile. Must be "marketplace", "leads", or "1pay".',
       })
     }
 
@@ -2098,10 +2098,10 @@ export async function updateResellerDefaultBridge(req: AdminRequest, res: Respon
     const { resellerId } = req.params
     const { defaultBridge, applyToExistingMerchants } = req.body
 
-    if (!['marketplace', 'leads'].includes(defaultBridge)) {
+    if (!VALID_BRIDGE_PROFILES.includes(defaultBridge)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid bridge profile. Must be "marketplace" or "leads".',
+        message: 'Invalid bridge profile. Must be "marketplace", "leads", or "1pay".',
       })
     }
 
