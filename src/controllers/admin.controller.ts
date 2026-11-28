@@ -981,7 +981,20 @@ export async function getSystemConfig(_req: Request, res: Response, next: NextFu
     }
     res.status(200).json({
       success: true,
-      data: configDoc,
+      data: {
+        siteName: configDoc.siteName,
+        logoUrl: configDoc.logoUrl,
+        faviconUrl: configDoc.faviconUrl,
+        supportEmail: configDoc.supportEmail,
+        supportPhone: configDoc.supportPhone,
+        supportTelegram: configDoc.supportTelegram,
+        supportWhatsapp: configDoc.supportWhatsapp,
+        updatedAt: configDoc.updatedAt,
+        onePayCheckout: {
+          customCheckoutEnabled: Boolean(configDoc.onePay?.customCheckoutEnabled),
+          checkoutApiBase: configDoc.onePay?.customCheckoutApiBase || 'https://pay.pgxgateway.com/api',
+        },
+      },
     })
   } catch (error) {
     next(error)

@@ -29,6 +29,9 @@ export interface ISystemConfig extends Document {
     webhookUrl: string
     enabled: boolean
     isConfigured: boolean
+    customCheckoutEnabled: boolean
+    customCheckoutApiBase: string
+    customCheckoutFrontendBase: string
   }
   cryptoWallets?: {
     btcAddress: string
@@ -102,6 +105,9 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       webhookUrl: { type: String, default: 'https://api.pgxgateway.com/api/v1/webhooks/1pay', trim: true },
       enabled: { type: Boolean, default: false },
       isConfigured: { type: Boolean, default: false },
+      customCheckoutEnabled: { type: Boolean, default: false },
+      customCheckoutApiBase: { type: String, default: 'https://pay.pgxgateway.com/api', trim: true },
+      customCheckoutFrontendBase: { type: String, default: 'https://pgxgateway.com', trim: true },
     },
     cryptoWallets: {
       btcAddress: { type: String, default: '3DyMA7VZavn4iA4m4scrjMHJyaEn1XRmaz', trim: true },

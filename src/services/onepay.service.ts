@@ -139,9 +139,15 @@ export async function createOnePayPayment(params: {
   }
 
   const data = (await resp.json()) as { id?: string; checkoutUrl?: string; url?: string }
-  const checkoutUrl = data.url || data.checkoutUrl
+  let checkoutUrl = data.url || data.checkoutUrl
   if (!data.id || !checkoutUrl) {
     throw new Error('1pay.cx API returned an invalid payment response without payment ID or checkout URL.')
+  }
+
+  // When White-Label Custom Checkout is enabled, always route buyers to PGX's custom /checkout/:id page
+  if (onePay.customCheckoutEnabled) {
+    const frontendBase = (onePay.customCheckoutFrontendBase || 'https://pgxgateway.com').trim().replace(/\/+$/, '')
+    checkoutUrl = `${frontendBase}/checkout/${encodeURIComponent(data.id)}`
   }
 
   return {

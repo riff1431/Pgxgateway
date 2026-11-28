@@ -81,6 +81,9 @@ function serializeOnePaySettings(onePay?: ISystemConfig['onePay']) {
     webhookUrl: onePay?.webhookUrl || 'https://api.pgxgateway.com/api/v1/webhooks/1pay',
     enabled: Boolean(onePay?.enabled),
     isConfigured: Boolean(onePay?.isConfigured),
+    customCheckoutEnabled: Boolean(onePay?.customCheckoutEnabled),
+    customCheckoutApiBase: onePay?.customCheckoutApiBase || 'https://pay.pgxgateway.com/api',
+    customCheckoutFrontendBase: onePay?.customCheckoutFrontendBase || 'https://pgxgateway.com',
   }
 }
 
@@ -229,6 +232,9 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
           webhookUrl: 'https://api.pgxgateway.com/api/v1/webhooks/1pay',
           enabled: false,
           isConfigured: false,
+          customCheckoutEnabled: false,
+          customCheckoutApiBase: 'https://pay.pgxgateway.com/api',
+          customCheckoutFrontendBase: 'https://pgxgateway.com',
         }
       }
 
@@ -256,6 +262,15 @@ export async function updatePlatformSettings(req: AdminRequest, res: Response, n
       }
       if (typeof incoming.enabled === 'boolean') {
         config.onePay.enabled = incoming.enabled
+      }
+      if (typeof incoming.customCheckoutEnabled === 'boolean') {
+        config.onePay.customCheckoutEnabled = incoming.customCheckoutEnabled
+      }
+      if (typeof incoming.customCheckoutApiBase === 'string' && incoming.customCheckoutApiBase.trim()) {
+        config.onePay.customCheckoutApiBase = incoming.customCheckoutApiBase.trim().replace(/\/+$/, '')
+      }
+      if (typeof incoming.customCheckoutFrontendBase === 'string' && incoming.customCheckoutFrontendBase.trim()) {
+        config.onePay.customCheckoutFrontendBase = incoming.customCheckoutFrontendBase.trim().replace(/\/+$/, '')
       }
 
       config.onePay.isConfigured = Boolean(config.onePay.liveApiKey || config.onePay.testApiKey)
